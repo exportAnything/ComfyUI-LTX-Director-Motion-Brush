@@ -1,3 +1,5 @@
+It's 4am when i made this so there are probably tons of typos and it looks sloppy, sorry
+
 1. You can now add videos to the "Main" track. Videos can be extended, trimmed, split, and they work with all of the other segments (You can do a quick test of this by uploading a video, and adding a text segment after it to control what happens next)
 <img width="1012" height="752" alt="image" src="https://github.com/user-attachments/assets/3894687e-9e3a-45ad-9041-6ef3c6dddd41" />
 
