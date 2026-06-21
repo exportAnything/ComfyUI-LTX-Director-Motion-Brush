@@ -316,43 +316,99 @@ def _conditioning_get_value(conditioning, key, default=None):
     return default
 
 
+def _as_non_negative_int(value, default=0):
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return default
+
+
+def _guide_entry_frame_sum(entries) -> int:
+    total = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        latent_shape = entry.get("latent_shape")
+        if not isinstance(latent_shape, (list, tuple)) or not latent_shape:
+            continue
+        total += _as_non_negative_int(latent_shape[0])
+    return total
+
+
+def _keyframe_unique_frame_count(keyframe_idxs) -> int:
+    if keyframe_idxs is None or not hasattr(keyframe_idxs, "shape") or len(keyframe_idxs.shape) < 3:
+        return 0
+    try:
+        return int(torch.unique(keyframe_idxs[:, 0, :, 0]).shape[0])
+    except Exception:
+        return 0
+
+
 def _normalise_guide_attention_entries(conditioning, director_attention_strength=None):
     keyframe_idxs = _conditioning_get_value(conditioning, "keyframe_idxs")
-    if keyframe_idxs is None or not hasattr(keyframe_idxs, "shape") or len(keyframe_idxs.shape) < 3:
-        return conditioning
-
-    keyframe_token_count = int(keyframe_idxs.shape[2])
-    if keyframe_token_count <= 0:
-        return conditioning
-
     existing = _conditioning_get_value(conditioning, "guide_attention_entries", [])
-    if not existing:
-        return conditioning
-
-    entries = [*existing]
-    existing_token_count = sum(int(entry.get("pre_filter_count", 0) or 0) for entry in entries)
-    missing_token_count = keyframe_token_count - existing_token_count
-    if missing_token_count <= 0:
-        return conditioning
-    if director_attention_strength is None:
-        director_attention_strength = _SYNTHETIC_DIRECTOR_ATTENTION_STRENGTH
-    director_attention_strength = max(0.0, min(1.0, float(director_attention_strength)))
-
-    synthetic_director_entry = {
-        "pre_filter_count": missing_token_count,
-        # Regular Director keyframes need a bookkeeping entry so LTX can
-        # partition guide tokens, but full attention here can overpower the
-        # motion-track IC-LoRA and collapse the result back into still frames.
-        "strength": director_attention_strength,
-        "pixel_mask": None,
-        # The latent_shape is only consumed when pixel_mask is present, but keep a
-        # valid shape for code paths that use entries to count guide frames.
-        "latent_shape": [1, 1, missing_token_count],
-    }
-    return node_helpers.conditioning_set_values(
-        conditioning,
-        {"guide_attention_entries": [synthetic_director_entry, *entries]},
+    entries = [*existing] if existing else []
+    crop_frames = _as_non_negative_int(
+        _conditioning_get_value(conditioning, "nghtdrp_guide_crop_latent_frames", 0)
     )
+    keyframe_crop_frames = _keyframe_unique_frame_count(keyframe_idxs)
+    guide_entry_crop_frames = _guide_entry_frame_sum(entries)
+
+    keyframe_token_count = 0
+    if keyframe_idxs is not None and hasattr(keyframe_idxs, "shape") and len(keyframe_idxs.shape) >= 3:
+        keyframe_token_count = int(keyframe_idxs.shape[2])
+    existing_token_count = sum(_as_non_negative_int(entry.get("pre_filter_count", 0)) for entry in entries)
+    missing_token_count = keyframe_token_count - existing_token_count
+
+    # LTX appends every guide latent to the end of the sampled latent. Director's
+    # guide node records its own appended frame count, while a downstream
+    # LTXAddVideoICLoRAGuide records attention entries but not the crop metadata
+    # that DirectorCropGuides relies on between stages.
+    if entries and missing_token_count > 0:
+        effective_crop_frames = max(
+            crop_frames + guide_entry_crop_frames,
+            crop_frames,
+            keyframe_crop_frames,
+        )
+    else:
+        effective_crop_frames = max(
+            crop_frames,
+            guide_entry_crop_frames,
+            keyframe_crop_frames,
+        )
+
+    values = {"nghtdrp_guide_crop_latent_frames": effective_crop_frames}
+    if effective_crop_frames > crop_frames:
+        print(
+            "[LTXDirectorMotionBrushV2GuideAttention] "
+            f"crop frames {crop_frames} -> {effective_crop_frames} "
+            f"(keyframe={keyframe_crop_frames}, guide_entries={guide_entry_crop_frames}, "
+            f"missing_tokens={max(0, missing_token_count)})"
+        )
+
+    if keyframe_token_count > 0 and entries and missing_token_count > 0:
+        if director_attention_strength is None:
+            director_attention_strength = _SYNTHETIC_DIRECTOR_ATTENTION_STRENGTH
+        director_attention_strength = max(0.0, min(1.0, float(director_attention_strength)))
+        synthetic_frame_count = max(1, crop_frames, keyframe_crop_frames - guide_entry_crop_frames)
+
+        synthetic_director_entry = {
+            "pre_filter_count": missing_token_count,
+            # Regular Director keyframes need a bookkeeping entry so LTX can
+            # partition guide tokens, but full attention here can overpower the
+            # motion-track IC-LoRA and collapse the result back into still frames.
+            "strength": director_attention_strength,
+            "pixel_mask": None,
+            # The first element is intentionally frame-like because some LTX
+            # helpers use guide_attention_entries as a frame-count fallback.
+            "latent_shape": [synthetic_frame_count, 1, max(1, missing_token_count)],
+        }
+        values["guide_attention_entries"] = [synthetic_director_entry, *entries]
+
+    if effective_crop_frames == crop_frames and "guide_attention_entries" not in values:
+        return conditioning
+
+    return node_helpers.conditioning_set_values(conditioning, values)
 
 
 class LTXDirectorMotionBrushV2GuideAttention(io.ComfyNode):
