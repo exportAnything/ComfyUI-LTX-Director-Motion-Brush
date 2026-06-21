@@ -1,49 +1,43 @@
-from .ltx_keyframer import LTXKeyframer
-from .multi_image_loader import MultiImageLoader
-from .ltx_sequencer import LTXSequencer
-from .speech_length_calculator import SpeechLengthCalculator
-from .load_audio_ui import LoadAudioUI
-from .load_video_ui import LoadVideoUI
-from .ltx_director import LTXDirector
-from .ltx_director_guide import LTXDirectorGuide, LTXDirectorCropGuides
 from comfy_api.latest import ComfyExtension, io
 from typing_extensions import override
 
-class PromptRelay(ComfyExtension):
+from .ltx_director_motion_brush_v2 import LTXDirectorMotionBrushV2
+from .ltx_director_motion_brush_guides_v2 import (
+    LTXDirectorMotionBrushV2Guide,
+    LTXDirectorMotionBrushV2GuideAttention,
+    LTXDirectorMotionBrushV2SafeDownscaleFactor,
+)
+
+
+class LTXDirectorMotionBrushV2Extension(ComfyExtension):
     @override
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
         return [
-            LTXDirector,
-            LTXDirectorGuide
+            LTXDirectorMotionBrushV2,
+            LTXDirectorMotionBrushV2Guide,
+            LTXDirectorMotionBrushV2GuideAttention,
+            LTXDirectorMotionBrushV2SafeDownscaleFactor,
         ]
 
-async def comfy_entrypoint() -> PromptRelay:
-    return PromptRelay()
-    
+
+async def comfy_entrypoint() -> LTXDirectorMotionBrushV2Extension:
+    return LTXDirectorMotionBrushV2Extension()
+
+
 NODE_CLASS_MAPPINGS = {
-    "LTXKeyframer": LTXKeyframer,
-    "MultiImageLoader": MultiImageLoader,
-    "LTXSequencer": LTXSequencer,
-    "SpeechLengthCalculator": SpeechLengthCalculator,
-    "LoadAudioUI": LoadAudioUI,
-    "LoadVideoUI": LoadVideoUI,
-    "LTXDirector": LTXDirector,
-    "LTXDirectorGuide": LTXDirectorGuide,
-    "LTXDirectorCropGuides": LTXDirectorCropGuides,
+    "LTXDirectorMotionBrushV2": LTXDirectorMotionBrushV2,
+    "LTXDirectorMotionBrushV2Guide": LTXDirectorMotionBrushV2Guide,
+    "LTXDirectorMotionBrushV2GuideAttention": LTXDirectorMotionBrushV2GuideAttention,
+    "LTXDirectorMotionBrushV2SafeDownscaleFactor": LTXDirectorMotionBrushV2SafeDownscaleFactor,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "LTXKeyframer": "LTX Keyframer",
-    "MultiImageLoader": "Multi Image Loader",
-    "LTXSequencer": "LTX Sequencer",
-    "SpeechLengthCalculator": "Speech Length Calculator",
-    "LoadAudioUI": "Load Audio UI",
-    "LoadVideoUI": "Load Video UI",
-    "LTXDirector": "LTX Director",
-    "LTXDirectorGuide": "LTX Director Guide",
-    "LTXDirectorCropGuides": "LTX Director Crop Guides",
+    "LTXDirectorMotionBrushV2": "LTX Director Motion Brush V2",
+    "LTXDirectorMotionBrushV2Guide": "LTX Director Motion Brush V2 Guide",
+    "LTXDirectorMotionBrushV2GuideAttention": "LTX Director Motion Brush V2 Guide Attention",
+    "LTXDirectorMotionBrushV2SafeDownscaleFactor": "LTX Director Motion Brush V2 Safe Downscale Factor",
 }
 
-WEB_DIRECTORY = "./js"
+WEB_DIRECTORY = "./js_motion_brush_v2"
 
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS', 'WEB_DIRECTORY']
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
