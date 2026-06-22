@@ -944,6 +944,69 @@ def _is_motion_brush_segment(seg: dict) -> bool:
     return (seg.get("type") or "image") in ("image", "matte")
 
 
+def _parse_guide_strengths(raw: str) -> list[float]:
+    strengths = []
+    if not isinstance(raw, str) or not raw.strip():
+        return strengths
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            strengths.append(max(0.0, min(1.0, float(item))))
+        except ValueError:
+            strengths.append(1.0)
+    return strengths
+
+
+def _segment_has_guide_source(seg: dict) -> bool:
+    seg_type = seg.get("type", "image")
+    if seg_type == "matte":
+        return True
+    return bool(seg.get("imageFile") or seg.get("imageB64"))
+
+
+def _visual_guide_segments_from_timeline(
+    timeline: dict,
+    start_frame: int,
+    duration_frames: int,
+) -> list[dict]:
+    if not isinstance(timeline, dict):
+        return []
+    end_frame = int(start_frame) + int(duration_frames)
+    out = []
+    for seg in timeline.get("segments", []):
+        if not isinstance(seg, dict):
+            continue
+        seg_type = seg.get("type", "image")
+        try:
+            seg_start = int(seg.get("start", 0))
+            seg_len = int(seg.get("length", 1))
+        except (TypeError, ValueError):
+            continue
+        if (
+            seg_type in ("image", "video", "matte")
+            and _segment_has_guide_source(seg)
+            and seg_start < end_frame
+            and seg_start + seg_len > int(start_frame)
+        ):
+            out.append(seg)
+    out.sort(key=lambda s: int(s.get("start", 0)))
+    return out
+
+
+def _segment_guide_strength(seg: dict, idx: int, fallback_strengths: list[float]) -> float:
+    default = 0.0 if isinstance(seg, dict) and seg.get("type") == "matte" else 1.0
+    if isinstance(seg, dict) and "guideStrength" in seg:
+        try:
+            return max(0.0, min(1.0, float(seg.get("guideStrength"))))
+        except (TypeError, ValueError):
+            return default
+    if idx < len(fallback_strengths):
+        return fallback_strengths[idx]
+    return default
+
+
 def _extract_motion_segments_from_timeline(timeline: dict) -> list[dict]:
     out = []
     for seg in timeline.get("segments", []):
@@ -1275,22 +1338,8 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
         guide_data = {"images": [], "insert_frames": [], "strengths": [], "frame_rate": frame_rate}
         derived_w, derived_h = custom_width, custom_height
         try:
-            img_segs = []
-            for s in tdata.get("segments", []):
-                seg_type = s.get("type", "image")
-                has_source = seg_type == "matte" or s.get("imageFile") or s.get("imageB64")
-                if (
-                    seg_type in ("image", "video", "matte")
-                    and has_source
-                    and int(s.get("start", 0)) < start_frame + duration_frames
-                    and int(s.get("start", 0)) + int(s.get("length", 1)) > start_frame
-                ):
-                    img_segs.append(s)
-            img_segs.sort(key=lambda s: s["start"])
-
-            strengths = []
-            if guide_strength.strip():
-                strengths = [float(x.strip()) for x in guide_strength.split(",") if x.strip()]
+            img_segs = _visual_guide_segments_from_timeline(tdata, start_frame, duration_frames)
+            strengths = _parse_guide_strengths(guide_strength)
 
             for idx, seg in enumerate(img_segs):
                 seg_start = int(seg.get("start", 0))
@@ -1343,7 +1392,7 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
                     insert_frame = max(0, seg_start + int(seg.get("length", 1)) - 1 - start_frame)
                 else:
                     insert_frame = max(0, seg_start - start_frame)
-                strength = strengths[idx] if idx < len(strengths) else 1.0
+                strength = _segment_guide_strength(seg, idx, strengths)
                 guide_data["images"].append(tensor)
                 guide_data["insert_frames"].append(insert_frame)
                 guide_data["strengths"].append(float(strength))

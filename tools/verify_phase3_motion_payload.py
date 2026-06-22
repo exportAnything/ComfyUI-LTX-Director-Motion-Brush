@@ -240,6 +240,59 @@ def main() -> None:
     matte_rgb = [round(float(v), 4) for v in matte[0, 0, 0].tolist()]
     assert_equal(matte_rgb, [0.0, 1.0, 0.0], "matte tensor color")
 
+    guide_timeline = {
+        "segments": [
+            {
+                "id": "img1",
+                "type": "image",
+                "start": 0,
+                "length": 24,
+                "imageFile": "whatdreamscost/a.png",
+                "guideStrength": 0.25,
+            },
+            {
+                "id": "text1",
+                "type": "text",
+                "start": 24,
+                "length": 24,
+            },
+            {
+                "id": "empty_image",
+                "type": "image",
+                "start": 48,
+                "length": 24,
+            },
+            {
+                "id": "matte1",
+                "type": "matte",
+                "start": 72,
+                "length": 24,
+                "matteColor": "#00ff00",
+                "guideStrength": 0.0,
+            },
+            {
+                "id": "img2",
+                "type": "image",
+                "start": 96,
+                "length": 24,
+                "imageFile": "whatdreamscost/b.png",
+            },
+        ],
+    }
+    guide_segs = motion_brush._visual_guide_segments_from_timeline(guide_timeline, 0, 120)
+    assert_equal([seg["id"] for seg in guide_segs], ["img1", "matte1", "img2"], "visual guide segment filter/order")
+    fallback_strengths = motion_brush._parse_guide_strengths("0.90,0.80,0.70")
+    resolved_strengths = [
+        motion_brush._segment_guide_strength(seg, idx, fallback_strengths)
+        for idx, seg in enumerate(guide_segs)
+    ]
+    assert_equal(resolved_strengths, [0.25, 0.0, 0.7], "per-segment guide strength overrides positional fallback")
+    assert_equal(
+        motion_brush._segment_guide_strength({"id": "matte_old", "type": "matte"}, 3, fallback_strengths),
+        0.0,
+        "matte guide strength default",
+    )
+
     print("Phase 3 motion payload guardrails passed")
 
 

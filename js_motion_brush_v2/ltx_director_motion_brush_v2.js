@@ -90,6 +90,24 @@ function isMotionBrushEligibleSegment(seg) {
   return type === "image" || type === "matte";
 }
 
+function isTimelineGuideSegment(seg) {
+  if (!seg) return false;
+  const type = seg.type || "image";
+  return type === "image" || type === "video" || type === "matte";
+}
+
+function hasTimelineGuideSource(seg) {
+  if (!isTimelineGuideSegment(seg)) return false;
+  if ((seg.type || "image") === "matte") return true;
+  return !!(seg.imageB64 || seg.imageFile || seg.imgObj || seg.videoEl);
+}
+
+function normalizedGuideStrength(seg, fallback = 1.0) {
+  const raw = seg?.guideStrength;
+  const value = raw === undefined || raw === null || raw === "" ? fallback : Number(raw);
+  return clamp01(Number.isFinite(value) ? value : fallback);
+}
+
 function hasMotionBrushVisualSource(seg) {
   if (!isMotionBrushEligibleSegment(seg)) return false;
   if ((seg.type || "image") === "matte") return true;
@@ -943,6 +961,10 @@ function parseInitial(jsonStr) {
     }
     if (seg.type === "matte") {
       seg.matteColor = normalizeMatteColor(seg.matteColor);
+    }
+    if (isTimelineGuideSegment(seg)) {
+      const fallbackStrength = seg.type === "matte" ? 0.0 : 1.0;
+      seg.guideStrength = normalizedGuideStrength(seg, fallbackStrength);
     }
   }
 
@@ -6416,7 +6438,7 @@ class TimelineEditor {
         this.promptInput.style.opacity = "1.0";
 
         const isImage = (this.selectionType === "image") && (seg.type === "image" || seg.type === "video" || seg.type === "matte");
-        const strength = isImage ? (seg.guideStrength ?? 1.0) : 1.0;
+        const strength = isImage ? normalizedGuideStrength(seg, seg.type === "matte" ? 0.0 : 1.0) : 1.0;
         this.strengthValue.value = strength.toFixed(2);
         this.strengthValue.disabled = !isImage;
         this.strengthValue.style.opacity = isImage ? "1.0" : "0.35";
@@ -9810,6 +9832,12 @@ class TimelineEditor {
       normalDurationFrames: this.timeline.normalDurationFrames,
       segments: sortedSegments.map(s => {
         const { imgObj, videoEl, _isSeeking, thumbnails, _extractingThumbs, _sSecs, _lSecs, _tSecs, _dSecs, _uploading, _blobUrl, ...rest } = s;
+        if (isTimelineGuideSegment(rest)) {
+          rest.guideStrength = normalizedGuideStrength(rest, rest.type === "matte" ? 0.0 : 1.0);
+        }
+        if (rest.type === "matte") {
+          rest.matteColor = normalizeMatteColor(rest.matteColor);
+        }
         return rest;
       }),
       motionSegments: (this.timeline.motionSegments || []).map(s => {
@@ -9888,9 +9916,9 @@ class TimelineEditor {
         val = imgStrengths.join(",");
       } else {
         const strList = sortedSegments
-          .filter(s => s.type !== "text")
+          .filter(s => isTimelineGuideSegment(s) && hasTimelineGuideSource(s))
           .filter(s => s.start + s.length > startFrames && s.start < endFrames)
-          .map(s => (s.guideStrength !== undefined ? s.guideStrength : 1.0).toFixed(2));
+          .map(s => normalizedGuideStrength(s, s.type === "matte" ? 0.0 : 1.0).toFixed(2));
         val = strList.join(",");
       }
       updateWidgetValue(this.guideStrengthWidget, val);
@@ -11681,7 +11709,7 @@ class TimelineEditor {
     };
     if (type === "matte") {
       seg.matteColor = DEFAULT_MATTE_COLOR;
-      seg.guideStrength = 1.0;
+      seg.guideStrength = 0.0;
     }
     this.timeline.segments.push(seg);
     this.timeline.segments.sort((a, b) => a.start - b.start);
@@ -11714,7 +11742,7 @@ class TimelineEditor {
       prompt: "",
       type: "matte",
       matteColor: DEFAULT_MATTE_COLOR,
-      guideStrength: 1.0,
+      guideStrength: 0.0,
     };
     this.timeline.segments.push(seg);
     this.timeline.segments.sort((a, b) => a.start - b.start);
