@@ -61,6 +61,41 @@ function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
 function clamp01(v) { return clamp(Number(v) || 0, 0, 1); }
 
+const DEFAULT_MATTE_COLOR = "#55cc78";
+
+function normalizeMatteColor(value) {
+  if (typeof value !== "string") return DEFAULT_MATTE_COLOR;
+  let hex = value.trim();
+  if (!hex) return DEFAULT_MATTE_COLOR;
+  if (!hex.startsWith("#")) hex = `#${hex}`;
+  if (/^#[0-9a-fA-F]{3}$/.test(hex)) {
+    hex = "#" + hex.slice(1).split("").map(ch => ch + ch).join("");
+  }
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return DEFAULT_MATTE_COLOR;
+  return hex.toLowerCase();
+}
+
+function matteTextColor(hex) {
+  const color = normalizeMatteColor(hex).slice(1);
+  const r = parseInt(color.slice(0, 2), 16);
+  const g = parseInt(color.slice(2, 4), 16);
+  const b = parseInt(color.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.58 ? "#101010" : "#ffffff";
+}
+
+function isMotionBrushEligibleSegment(seg) {
+  if (!seg) return false;
+  const type = seg.type || "image";
+  return type === "image" || type === "matte";
+}
+
+function hasMotionBrushVisualSource(seg) {
+  if (!isMotionBrushEligibleSegment(seg)) return false;
+  if ((seg.type || "image") === "matte") return true;
+  return !!(seg.imageB64 || seg.imageFile || seg.imgObj);
+}
+
 const MOTION_TRACK_COLORS = ["#ef4444", "#22c55e", "#3b82f6", "#f59e0b", "#a855f7", "#06b6d4", "#f97316", "#84cc16"];
 const MOTION_BRUSH_MAX_WIDTH = 1024;
 const MOTION_BRUSH_MAX_HEIGHT = 560;
@@ -369,6 +404,45 @@ const STYLES = `
   .pr-strength-input:disabled {
     opacity: 0.35;
     cursor: not-allowed;
+  }
+  .pr-matte-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+    user-select: none;
+    -webkit-user-select: none;
+    display: none;
+    margin-left: 6px;
+  }
+  .pr-matte-color {
+    width: 30px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid #444;
+    border-radius: 4px;
+    background: #222;
+    cursor: pointer;
+    display: none;
+  }
+  .pr-matte-color::-webkit-color-swatch-wrapper {
+    padding: 2px;
+  }
+  .pr-matte-color::-webkit-color-swatch {
+    border: 0;
+    border-radius: 2px;
+  }
+  .pr-matte-hex {
+    font-size: 12px;
+    color: #fff;
+    background: #222;
+    border: 1px solid #444;
+    border-radius: 4px;
+    width: 74px;
+    padding: 3px 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    display: none;
+    box-sizing: border-box;
   }
   .pr-gap-menu {
     position: fixed;
@@ -726,6 +800,16 @@ const STYLES = `
     font-weight: 700;
     white-space: nowrap;
   }
+  .pr-motion-warning {
+    display: none;
+    color: #ffd166;
+    background: #2a2114;
+    border: 1px solid #6f4e14;
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 11px;
+    line-height: 1.35;
+  }
   .pr-motion-canvas-wrap {
     width: 100%;
     min-height: 320px;
@@ -761,6 +845,7 @@ const ICONS = {
   motion: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>`,
   trash: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`,
   text: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>`,
+  matte: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>`,
   play: `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`,
   pause: `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`,
   loop: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12A9 9 0 0 0 6 5.3L3 8"></path><polyline points="3 3 3 8 8 8"></polyline><path d="M3 12a9 9 0 0 0 15 6.7l3-2.7"></path><polyline points="21 21 21 16 16 16"></polyline></svg>`,
@@ -855,6 +940,9 @@ function parseInitial(jsonStr) {
     }
     if (seg.isEndFrame === undefined) {
       seg.isEndFrame = false;
+    }
+    if (seg.type === "matte") {
+      seg.matteColor = normalizeMatteColor(seg.matteColor);
     }
   }
 
@@ -2388,6 +2476,12 @@ class TimelineEditor {
     addTextBtn.addEventListener("click", () => this.addTextSegmentFreeSpace());
     this.addTextBtn = addTextBtn;
 
+    const addMatteBtn = document.createElement("button");
+    addMatteBtn.className = "pr-btn";
+    addMatteBtn.innerHTML = `${ICONS.matte} Add Matte`;
+    addMatteBtn.addEventListener("click", () => this.addMatteSegmentFreeSpace());
+    this.addMatteBtn = addMatteBtn;
+
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "pr-btn pr-btn-danger";
     deleteBtn.innerHTML = `${ICONS.trash} Delete`;
@@ -2400,6 +2494,7 @@ class TimelineEditor {
     actionGroup.appendChild(this.videoFileInput);
     actionGroup.appendChild(uploadBtn);
     actionGroup.appendChild(addTextBtn);
+    actionGroup.appendChild(addMatteBtn);
     actionGroup.appendChild(uploadAudioBtn);
     actionGroup.appendChild(uploadVideoBtn);
     actionGroup.appendChild(uploadMotionBtn);
@@ -3365,6 +3460,23 @@ class TimelineEditor {
     this.strengthValue.disabled = true;
     this.strengthValue.style.cursor = "ew-resize";
 
+    this.matteColorLabel = document.createElement("span");
+    this.matteColorLabel.className = "pr-matte-label";
+    this.matteColorLabel.textContent = "Matte:";
+
+    this.matteColorInput = document.createElement("input");
+    this.matteColorInput.type = "color";
+    this.matteColorInput.className = "pr-matte-color";
+    this.matteColorInput.value = DEFAULT_MATTE_COLOR;
+    this.matteColorInput.title = "Matte clip color";
+
+    this.matteHexInput = document.createElement("input");
+    this.matteHexInput.type = "text";
+    this.matteHexInput.className = "pr-matte-hex";
+    this.matteHexInput.value = DEFAULT_MATTE_COLOR;
+    this.matteHexInput.placeholder = "#55cc78";
+    this.matteHexInput.title = "Matte clip hex color";
+
     this.vidStrLabel = document.createElement("span");
     this.vidStrLabel.className = "pr-strength-label";
     this.vidStrLabel.textContent = "Video Strength:";
@@ -3411,6 +3523,29 @@ class TimelineEditor {
       if (this.selectionType === "motion" && this.timeline.motionSegments[this.selectedIndex]) {
         this.timeline.motionSegments[this.selectedIndex].videoAttentionStrength = val;
         this.commitChanges();
+      }
+    });
+
+    const applyMatteColor = (rawColor) => {
+      const color = normalizeMatteColor(rawColor);
+      if (this.matteColorInput) this.matteColorInput.value = color;
+      if (this.matteHexInput) this.matteHexInput.value = color;
+      if (this.selectionType === "image" && this.timeline.segments[this.selectedIndex]) {
+        const seg = this.timeline.segments[this.selectedIndex];
+        if (seg.type === "matte") {
+          seg.matteColor = color;
+          this.commitChanges();
+        }
+      }
+    };
+
+    this.matteColorInput.addEventListener("input", (e) => applyMatteColor(e.target.value));
+    this.matteHexInput.addEventListener("change", (e) => applyMatteColor(e.target.value));
+    this.matteHexInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        applyMatteColor(e.target.value);
+        this.matteHexInput.blur();
       }
     });
 
@@ -3584,6 +3719,9 @@ class TimelineEditor {
     this.strengthRow.appendChild(this.segmentBoundsDisplay);
     this.strengthRow.appendChild(this.strengthLabel);
     this.strengthRow.appendChild(this.strengthValue);
+    this.strengthRow.appendChild(this.matteColorLabel);
+    this.strengthRow.appendChild(this.matteColorInput);
+    this.strengthRow.appendChild(this.matteHexInput);
     this.strengthRow.appendChild(this.vidStrLabel);
     this.strengthRow.appendChild(this.vidStrValue);
     this.strengthRow.appendChild(this.vidAttnLabel);
@@ -3925,6 +4063,9 @@ class TimelineEditor {
     this.motionStatus.className = "pr-motion-status";
     toolbar.appendChild(this.motionStatus);
 
+    this.motionWarning = document.createElement("div");
+    this.motionWarning.className = "pr-motion-warning";
+
     const canvasWrap = document.createElement("div");
     canvasWrap.className = "pr-motion-canvas-wrap";
 
@@ -3946,6 +4087,7 @@ class TimelineEditor {
 
     canvasWrap.appendChild(this.motionCanvas);
     this.motionPanel.appendChild(toolbar);
+    this.motionPanel.appendChild(this.motionWarning);
     this.motionPanel.appendChild(canvasWrap);
   }
 
@@ -3958,7 +4100,7 @@ class TimelineEditor {
       savedMotionByKey.set(motionSegmentPositionKey(motionSeg), motionSeg);
     }
     for (const seg of this.timeline.segments) {
-      if (!seg || seg.type === "text") continue;
+      if (!isMotionBrushEligibleSegment(seg)) continue;
       const savedMotion = savedMotionByKey.get(motionSegmentKey(seg)) || savedMotionByKey.get(motionSegmentPositionKey(seg));
       if (savedMotion && !hasMotionTrackPoints(seg.motionTracks)) {
         seg.motionTracks = savedMotion.tracks;
@@ -3972,13 +4114,28 @@ class TimelineEditor {
   getSelectedMotionSegment() {
     if (this.selectionType !== "image" || this.selectedIndex < 0) return null;
     const seg = this.timeline.segments[this.selectedIndex];
-    if (!seg || seg.type === "text" || (!seg.imageB64 && !seg.imageFile && !seg.imgObj && !seg.videoEl)) return null;
+    if (!hasMotionBrushVisualSource(seg)) return null;
     ensureMotionSegment(seg);
     return seg;
   }
 
+  getSelectedMainSegment() {
+    if (this.selectionType !== "image" || this.selectedIndex < 0) return null;
+    return this.timeline.segments[this.selectedIndex] || null;
+  }
+
   getMotionTracks(seg = this.getSelectedMotionSegment()) {
     return ensureMotionSegment(seg);
+  }
+
+  hasMainTimelineVideoSegments() {
+    return (this.timeline?.segments || []).some((seg) => seg && seg.type === "video");
+  }
+
+  hasImageMotionTrackPoints() {
+    return (this.timeline?.segments || []).some(
+      (seg) => isMotionBrushEligibleSegment(seg) && hasMotionTrackPoints(seg.motionTracks)
+    );
   }
 
   getMotionHistoryKey(seg = this.getSelectedMotionSegment()) {
@@ -4045,13 +4202,15 @@ class TimelineEditor {
   syncMotionTracksData() {
     if (!this.motionTracksWidget) return;
     const segments = (this.timeline.segments || [])
-      .filter((seg) => seg && seg.type !== "text" && Array.isArray(seg.motionTracks) && seg.motionTracks.some((track) => track.length > 0))
+      .filter((seg) => isMotionBrushEligibleSegment(seg) && Array.isArray(seg.motionTracks) && seg.motionTracks.some((track) => track.length > 0))
       .map((seg) => ({
         id: seg.id || "",
+        type: seg.type || "image",
         start: Math.round(seg.start || 0),
         length: Math.round(seg.length || 0),
         prompt: seg.prompt || "",
         imageFile: seg.imageFile || "",
+        matteColor: (seg.type || "image") === "matte" ? normalizeMatteColor(seg.matteColor) : undefined,
         imageSize: seg.imageSize || {},
         pointsToSample: seg.motionPointsToSample || 121,
         tracks: normalizeMotionTracks(seg.motionTracks),
@@ -4113,7 +4272,45 @@ class TimelineEditor {
     this.updateMotionBrushUI();
   }
 
+  getWidgetNumber(name, fallback = 0) {
+    const widget = this.node?.widgets?.find(w => w.name === name);
+    const value = Number(widget?.value);
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  getReferenceVisualSize() {
+    const customW = this.getWidgetNumber("custom_width", 0);
+    const customH = this.getWidgetNumber("custom_height", 0);
+    if (customW > 0 && customH > 0) {
+      return { width: customW, height: customH };
+    }
+
+    const candidates = [
+      this.timeline?.segments?.[this.selectedIndex],
+      ...(this.timeline?.segments || []),
+    ];
+    for (const candidate of candidates) {
+      if (!candidate || candidate.type === "matte" || candidate.type === "text") continue;
+      const img = candidate.imgObj;
+      const video = candidate.videoEl;
+      const width = candidate.imageSize?.width || img?.naturalWidth || img?.width || video?.videoWidth || candidate.videoWidth;
+      const height = candidate.imageSize?.height || img?.naturalHeight || img?.height || video?.videoHeight || candidate.videoHeight;
+      if (width > 0 && height > 0) return { width, height };
+    }
+
+    return { width: customW > 0 ? customW : 1024, height: customH > 0 ? customH : 576 };
+  }
+
   getMotionCanvasSize(seg) {
+    if ((seg?.type || "image") === "matte") {
+      const matteSize = this.getReferenceVisualSize();
+      const scale = Math.min(MOTION_BRUSH_MAX_WIDTH / matteSize.width, MOTION_BRUSH_MAX_HEIGHT / matteSize.height, 1);
+      return {
+        width: Math.max(1, Math.round(matteSize.width * scale)),
+        height: Math.max(1, Math.round(matteSize.height * scale)),
+      };
+    }
+
     const img = seg?.imgObj;
     const video = seg?.videoEl;
     const imgW = Math.max(1, seg?.imageSize?.width || img?.naturalWidth || img?.width || video?.videoWidth || seg?.videoWidth || 1024);
@@ -4127,10 +4324,51 @@ class TimelineEditor {
 
   updateMotionBrushUI() {
     if (!this.motionPanel || !this.motionCanvas) return;
+    const mainSeg = this.getSelectedMainSegment();
     const seg = this.getSelectedMotionSegment();
-    const visible = !!seg && !this.retakeMode;
+    const visible = !!mainSeg && !this.retakeMode;
     this.motionPanel.classList.toggle("hidden", !visible);
-    if (!visible) return;
+    if (!visible) {
+      if (this.motionWarning) this.motionWarning.style.display = "none";
+      return;
+    }
+
+    const hasVideoSegments = this.hasMainTimelineVideoSegments();
+    if (this.motionWarning) {
+      if (hasVideoSegments) {
+        this.motionWarning.textContent = this.hasImageMotionTrackPoints()
+          ? "Motion Brush supports image and matte clips only. Remove normal timeline video segments, clear Motion Brush tracks, or use Retake Mode for video edits before generating."
+          : "Motion Brush supports image and matte clips only. Use Retake Mode for video edits.";
+        this.motionWarning.style.display = "block";
+      } else {
+        this.motionWarning.style.display = "none";
+      }
+    }
+
+    if (!seg) {
+      const disabledReason = mainSeg?.type === "video"
+        ? "Motion Brush: image and matte clips only"
+        : (mainSeg?.type === "text"
+          ? "Motion Brush disabled for text segments"
+          : "Select an image or matte clip");
+      const size = { width: MOTION_BRUSH_MAX_WIDTH, height: 120 };
+      const dpr = window.devicePixelRatio || 1;
+      this.motionCanvas.style.width = `${size.width}px`;
+      this.motionCanvas.style.height = `${size.height}px`;
+      this.motionCanvas.width = Math.round(size.width * dpr);
+      this.motionCanvas.height = Math.round(size.height * dpr);
+      this.motionCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.motionView = { x: 0, y: 0, w: size.width, h: size.height };
+      for (const key of ["select", "draw", "new", "delete", "undo", "redo", "clear"]) {
+        if (this.motionButtons[key]) this.motionButtons[key].disabled = true;
+      }
+      this.motionButtons.select?.classList.remove("active");
+      this.motionButtons.draw?.classList.remove("active");
+      this.motionCanvas.style.cursor = "default";
+      this.motionStatus.textContent = disabledReason;
+      this.renderMotionBrush();
+      return;
+    }
 
     const tracks = this.getMotionTracks(seg);
     if (tracks.length === 0) this.motionActiveTrack = 0;
@@ -4147,6 +4385,9 @@ class TimelineEditor {
 
     this.motionButtons.select.classList.toggle("active", this.motionMode === "select");
     this.motionButtons.draw.classList.toggle("active", this.motionMode === "draw");
+    this.motionButtons.select.disabled = false;
+    this.motionButtons.draw.disabled = false;
+    this.motionButtons.new.disabled = false;
     this.motionButtons.delete.disabled = tracks.length === 0;
     this.motionButtons.undo.disabled = !this.canUndoMotion(seg);
     this.motionButtons.redo.disabled = !this.canRedoMotion(seg);
@@ -4302,7 +4543,22 @@ class TimelineEditor {
     ctx.fillRect(0, 0, w, h);
     if (!seg) return;
 
-    if (seg.videoEl && seg.videoEl.readyState >= 2 && seg.videoEl.videoWidth > 0) {
+    if ((seg.type || "image") === "matte") {
+      const matteColor = normalizeMatteColor(seg.matteColor);
+      ctx.fillStyle = matteColor;
+      ctx.fillRect(0, 0, w, h);
+      ctx.save();
+      ctx.globalAlpha = 0.14;
+      ctx.strokeStyle = matteTextColor(matteColor);
+      ctx.lineWidth = 1;
+      for (let sx = -h; sx < w + h; sx += 28) {
+        ctx.beginPath();
+        ctx.moveTo(sx, h);
+        ctx.lineTo(sx + h, 0);
+        ctx.stroke();
+      }
+      ctx.restore();
+    } else if (seg.videoEl && seg.videoEl.readyState >= 2 && seg.videoEl.videoWidth > 0) {
       ctx.globalAlpha = 0.86;
       try { ctx.drawImage(seg.videoEl, 0, 0, w, h); } catch (err) { }
       ctx.globalAlpha = 1;
@@ -5934,6 +6190,21 @@ class TimelineEditor {
     }
   }
 
+  setMatteControlsVisible(seg = null) {
+    const isMatte = !!seg && this.selectionType === "image" && seg.type === "matte";
+    const display = isMatte ? "" : "none";
+    if (this.matteColorLabel) this.matteColorLabel.style.display = display;
+    if (this.matteColorInput) this.matteColorInput.style.display = display;
+    if (this.matteHexInput) this.matteHexInput.style.display = display;
+
+    if (isMatte) {
+      const color = normalizeMatteColor(seg.matteColor);
+      seg.matteColor = color;
+      if (this.matteColorInput) this.matteColorInput.value = color;
+      if (this.matteHexInput) this.matteHexInput.value = color;
+    }
+  }
+
   updateUIFromSelection() {
     setTimeout(() => { if (this.updateMotionBrushUI) this.updateMotionBrushUI(); }, 0);
     if (this.selectedSegmentIds && this.isMultiSelectActive()) {
@@ -5976,6 +6247,7 @@ class TimelineEditor {
         this.vidAttnValue.disabled = true;
         this.vidAttnValue.style.opacity = "0.35";
       }
+      this.setMatteControlsVisible(null);
 
       if (this.audioInfoArea) this.audioInfoArea.style.display = "none";
       if (this.motionInfoArea) this.motionInfoArea.style.display = "none";
@@ -6029,6 +6301,7 @@ class TimelineEditor {
       this.promptInput.placeholder = "";
       this.promptInput.style.opacity = "";
     }
+    this.setMatteControlsVisible(!this.retakeMode && this.selectionType === "image" && seg && seg.type === "matte" ? seg : null);
 
     if (this.retakeMode) {
       if (this.promptWrapper) this.promptWrapper.style.display = "block";
@@ -6132,6 +6405,9 @@ class TimelineEditor {
       this.vidAttnValue.style.display = "none";
 
       if (seg) {
+        if (this.segmentPromptLabel && seg.type === "matte") {
+          this.segmentPromptLabel.textContent = "Matte Prompt";
+        }
         if (this.selectionType !== "motion") {
           this.promptInput.value = seg.prompt || "";
           this.promptInput.placeholder = "Enter prompt for selected segment...";
@@ -6139,7 +6415,7 @@ class TimelineEditor {
         this.promptInput.disabled = false;
         this.promptInput.style.opacity = "1.0";
 
-        const isImage = (this.selectionType === "image") && (seg.type === "image" || seg.type === "video");
+        const isImage = (this.selectionType === "image") && (seg.type === "image" || seg.type === "video" || seg.type === "matte");
         const strength = isImage ? (seg.guideStrength ?? 1.0) : 1.0;
         this.strengthValue.value = strength.toFixed(2);
         this.strengthValue.disabled = !isImage;
@@ -6238,6 +6514,7 @@ class TimelineEditor {
     // 2. Hide/show toolbar action buttons
     if (this.uploadBtn) this.uploadBtn.style.display = isRetake ? "none" : "";
     if (this.addTextBtn) this.addTextBtn.style.display = isRetake ? "none" : "";
+    if (this.addMatteBtn) this.addMatteBtn.style.display = isRetake ? "none" : "";
     if (this.uploadAudioBtn) this.uploadAudioBtn.style.display = isRetake ? "none" : "";
     if (this.uploadMotionBtn) this.uploadMotionBtn.style.display = isRetake ? "none" : "";
     if (this.deleteBtn) this.deleteBtn.style.display = isRetake ? "none" : "";
@@ -6749,8 +7026,27 @@ class TimelineEditor {
           this.ctx.font = "bold 12px sans-serif";
           this.ctx.fillText("Drop to Place", startX + pxWidth / 2, RULER_HEIGHT + this.blockHeight / 2);
         } else {
-          this.ctx.fillStyle = seg.type === "text" ? "#000b12" : "#000";
+          this.ctx.fillStyle = seg.type === "text" ? "#000b12" : (seg.type === "matte" ? normalizeMatteColor(seg.matteColor) : "#000");
           this.ctx.fillRect(startX, RULER_HEIGHT + 1, pxWidth, this.blockHeight - 2);
+          if (seg.type === "matte" && pxWidth > 8) {
+            const stripeColor = matteTextColor(seg.matteColor);
+            const matteBaseAlpha = this.ctx.globalAlpha;
+            this.ctx.save();
+            this.ctx.beginPath();
+            this.ctx.rect(startX, RULER_HEIGHT + 1, pxWidth, this.blockHeight - 2);
+            this.ctx.clip();
+            this.ctx.globalAlpha = matteBaseAlpha * 0.12;
+            this.ctx.strokeStyle = stripeColor;
+            this.ctx.lineWidth = 1;
+            for (let sx = startX - this.blockHeight; sx < startX + pxWidth + this.blockHeight; sx += 24) {
+              this.ctx.beginPath();
+              this.ctx.moveTo(sx, RULER_HEIGHT + this.blockHeight);
+              this.ctx.lineTo(sx + this.blockHeight, RULER_HEIGHT);
+              this.ctx.stroke();
+            }
+            this.ctx.restore();
+            this.ctx.globalAlpha = matteBaseAlpha;
+          }
         }
 
         let drawSource = null;
@@ -6823,7 +7119,74 @@ class TimelineEditor {
           }
         }
 
-        if ((seg.type === "video" || drawSource) && seg.type !== "ghost") {
+        if (seg.type === "matte" && seg.type !== "ghost") {
+          const matteColor = normalizeMatteColor(seg.matteColor);
+          const textColor = matteTextColor(matteColor);
+          if (pxWidth > 0) {
+            this.ctx.save();
+            this.ctx.beginPath();
+            this.ctx.rect(startX, RULER_HEIGHT, pxWidth, this.blockHeight);
+            this.ctx.clip();
+            this.ctx.fillStyle = "rgba(0, 0, 0, 0.60)";
+            this.ctx.fillRect(startX, RULER_HEIGHT + 1, 44, 16);
+            this.ctx.fillStyle = "#fff";
+            this.ctx.font = "bold 10px sans-serif";
+            this.ctx.textAlign = "center";
+            this.ctx.textBaseline = "middle";
+            this.ctx.fillText("MATTE", startX + 22, RULER_HEIGHT + 9);
+
+            if (pxWidth > 88) {
+              this.ctx.font = "bold 10px sans-serif";
+              const hexText = matteColor.toUpperCase();
+              const hexW = this.ctx.measureText(hexText).width + 10;
+              this.ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+              this.ctx.fillRect(startX + 46, RULER_HEIGHT + 1, hexW, 16);
+              this.ctx.fillStyle = "#fff";
+              this.ctx.textAlign = "left";
+              this.ctx.fillText(hexText, startX + 51, RULER_HEIGHT + 9);
+            }
+
+            if (pxWidth > 36) {
+              this.ctx.font = "bold 13px sans-serif";
+              this.ctx.fillStyle = textColor;
+              this.ctx.textAlign = "center";
+              this.ctx.textBaseline = "middle";
+              this.ctx.fillText("Matte Clip", startX + pxWidth / 2, RULER_HEIGHT + this.blockHeight / 2);
+            }
+            this.ctx.restore();
+          }
+
+          if (seg.prompt && pxWidth > 24) {
+            const overlayH = Math.round(this.blockHeight * 0.20);
+            const overlayY = RULER_HEIGHT + this.blockHeight - overlayH;
+
+            this.ctx.save();
+            this.ctx.beginPath();
+            this.ctx.rect(startX, overlayY, pxWidth, overlayH);
+            this.ctx.clip();
+
+            this.ctx.fillStyle = "rgba(0, 0, 0, 0.60)";
+            this.ctx.fillRect(startX, overlayY, pxWidth, overlayH);
+
+            const fontSize = Math.min(11, overlayH * 0.58);
+            this.ctx.font = `${fontSize}px sans-serif`;
+            this.ctx.fillStyle = "#e0e3ed";
+            this.ctx.textAlign = "center";
+            this.ctx.textBaseline = "middle";
+
+            const maxTextW = pxWidth - 10;
+            let label = seg.prompt;
+            if (this.ctx.measureText(label).width > maxTextW) {
+              while (label.length > 0 && this.ctx.measureText(label + "...").width > maxTextW) {
+                label = label.slice(0, -1);
+              }
+              label += "...";
+            }
+
+            this.ctx.fillText(label, startX + pxWidth / 2, overlayY + overlayH / 2);
+            this.ctx.restore();
+          }
+        } else if ((seg.type === "video" || drawSource) && seg.type !== "ghost") {
           if (seg.type === "video" && pxWidth > 0) {
             this.ctx.save();
             this.ctx.beginPath();
@@ -10333,6 +10696,15 @@ class TimelineEditor {
       };
       menu.appendChild(textBtn);
 
+      const matteBtn = document.createElement("button");
+      matteBtn.className = "pr-gap-menu-btn";
+      matteBtn.innerHTML = `${ICONS.matte} Matte Clip`;
+      matteBtn.onclick = () => {
+        this.addSegmentInGap(gap.frameStart, gap.frameEnd, "matte");
+        this.dismissContextMenu();
+      };
+      menu.appendChild(matteBtn);
+
       const imgBtn = document.createElement("button");
       imgBtn.className = "pr-gap-menu-btn";
       imgBtn.innerHTML = `${ICONS.upload} Image Segment`;
@@ -10446,6 +10818,14 @@ class TimelineEditor {
         this.dismissGapMenu();
       });
 
+      const matteBtn = document.createElement("button");
+      matteBtn.className = "pr-gap-menu-btn";
+      matteBtn.innerHTML = `${ICONS.matte} Matte Clip`;
+      matteBtn.addEventListener("click", () => {
+        this.addSegmentInGap(gap.frameStart, gap.frameEnd, "matte");
+        this.dismissGapMenu();
+      });
+
       const imgBtn = document.createElement("button");
       imgBtn.className = "pr-gap-menu-btn";
       imgBtn.innerHTML = `${ICONS.upload} Image Segment`;
@@ -10501,6 +10881,7 @@ class TimelineEditor {
       });
 
       menu.appendChild(textBtn);
+      menu.appendChild(matteBtn);
       menu.appendChild(imgBtn);
       menu.appendChild(vidBtn);
       menu.appendChild(pasteImageBtn);
@@ -11297,6 +11678,43 @@ class TimelineEditor {
       id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
       start: frameStart, length: frameEnd - frameStart,
       prompt: "", type,
+    };
+    if (type === "matte") {
+      seg.matteColor = DEFAULT_MATTE_COLOR;
+      seg.guideStrength = 1.0;
+    }
+    this.timeline.segments.push(seg);
+    this.timeline.segments.sort((a, b) => a.start - b.start);
+
+    if (!this.retakeMode) {
+      this.growTimelineIfNeeded(seg.start + seg.length);
+    }
+
+    this.selectionType = "image";
+    this.selectedIndex = this.timeline.segments.findIndex(s => s.id === seg.id);
+    this.updateUIFromSelection();
+    this.commitChanges();
+  }
+
+  addMatteSegmentFreeSpace() {
+    const frameRate = this.getFrameRate();
+    const newLength = Math.max(1, frameRate); // 1 second default
+    const sorted = [...this.timeline.segments].sort((a, b) => a.start - b.start);
+    let newStart = 0;
+    for (const seg of sorted) {
+      if (newStart + newLength <= seg.start) break;
+      newStart = Math.max(newStart, seg.start + seg.length);
+    }
+
+    const durationFrames = this.getVisualDurationFrames();
+    const seg = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+      start: newStart,
+      length: Math.min(newLength, Math.max(newLength, durationFrames - newStart)),
+      prompt: "",
+      type: "matte",
+      matteColor: DEFAULT_MATTE_COLOR,
+      guideStrength: 1.0,
     };
     this.timeline.segments.push(seg);
     this.timeline.segments.sort((a, b) => a.start - b.start);

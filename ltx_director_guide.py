@@ -11,7 +11,7 @@ import folder_paths
 import node_helpers
 from comfy_extras import nodes_lt
 from comfy_api.latest import io
-from .ltx_director import GuideData, MotionGuideData, _resize_image
+from .ltx_director_motion_brush_v2 import GuideData, MotionGuideData, _resize_image
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +94,34 @@ def _snap_latent_to_downscale(latent_image, noise_mask, downscale_factor, method
         w, h, new_w, new_h, factor,
     )
     return _resize_latent_spatial(latent_image, noise_mask, new_w, new_h, method)
+
+def _retake_latent_interval(tdata, start_frame, latent_length, time_scale_factor, ltxv_length):
+    retake_start = int(round(float(tdata.get("retakeStart", 0) or 0)))
+    retake_len = int(round(float(tdata.get("retakeLength", 0) or 0)))
+    if retake_len <= 0:
+        return 0, 0
+
+    frame_start = int(round(float(start_frame or 0)))
+    frame_count = max(1, int(round(float(ltxv_length or 1))))
+    frame_end = frame_start + frame_count
+    retake_end = retake_start + retake_len
+
+    overlap_start = max(frame_start, retake_start)
+    overlap_end = min(frame_end, retake_end)
+    if overlap_end <= overlap_start:
+        return 0, 0
+
+    stride = max(1.0, float(time_scale_factor or 1))
+    relative_start = overlap_start - frame_start
+    relative_end = overlap_end - frame_start
+    l_start = int(math.floor(relative_start / stride))
+    l_end = int(math.ceil(relative_end / stride))
+
+    l_start = max(0, min(int(latent_length), l_start))
+    l_end = max(0, min(int(latent_length), l_end))
+    if l_end <= l_start:
+        return 0, 0
+    return l_start, l_end
 
 def _load_lora_model_only(model, ic_lora_name, strength_model):
     lora_path = folder_paths.get_full_path_or_raise("loras", ic_lora_name)
@@ -371,18 +399,12 @@ class LTXDirectorGuide:
             target_height = latent_height * 32
 
             # Calculate retake region latent indices first so we know what to copy/paste
-            retake_start = int(tdata.get("retakeStart", 0))
-            retake_len = int(tdata.get("retakeLength", 0))
             retake_strength = float(tdata.get("retakeStrength", 1.0))
 
             start_frame = int(guide_data.get("start_frame", 0))
-            relative_start = max(0, retake_start - start_frame)
-            
-            l_start = relative_start // time_scale_factor
-            l_end = int(math.ceil((relative_start + retake_len) / time_scale_factor))
-            
-            l_start = min(l_start, latent_length)
-            l_end = min(l_end, latent_length)
+            l_start, l_end = _retake_latent_interval(
+                tdata, start_frame, latent_length, time_scale_factor, ltxv_length
+            )
 
             # Stage 2 optimization: If the retake region covers the entire generation area,
             # there are no preserved regions to copy over in Stage 2. We can bypass video loading/encoding.

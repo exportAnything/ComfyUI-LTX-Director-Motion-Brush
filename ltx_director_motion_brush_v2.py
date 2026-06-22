@@ -394,9 +394,47 @@ async def ltx_director_upload_chunk(request):
 
 
 
-def _load_image_tensor(seg: dict) -> torch.Tensor:
+DEFAULT_MATTE_COLOR = "#55cc78"
+
+
+def _normalise_hex_color(value, fallback=DEFAULT_MATTE_COLOR):
+    if not isinstance(value, str):
+        value = fallback
+    value = value.strip()
+    if not value:
+        value = fallback
+    if not value.startswith("#"):
+        value = f"#{value}"
+    if len(value) == 4:
+        value = "#" + "".join(ch * 2 for ch in value[1:])
+    if len(value) != 7:
+        value = fallback
+    try:
+        int(value[1:], 16)
+    except Exception:
+        value = fallback
+    return value.lower()
+
+
+def _matte_color_tensor(color_value, width=512, height=512) -> torch.Tensor:
+    color = _normalise_hex_color(color_value)[1:]
+    rgb = np.array([
+        int(color[0:2], 16),
+        int(color[2:4], 16),
+        int(color[4:6], 16),
+    ], dtype=np.float32) / 255.0
+    width = max(1, int(width or 512))
+    height = max(1, int(height or 512))
+    arr = np.ones((height, width, 3), dtype=np.float32) * rgb
+    return torch.from_numpy(arr).unsqueeze(0)
+
+
+def _load_image_tensor(seg: dict, matte_width=512, matte_height=512) -> torch.Tensor:
     """Decode an image from the ComfyUI input folder (if imageFile provided) or fallback to base64
     to a ComfyUI-style image tensor of shape [1, H, W, 3], float32 in [0, 1]."""
+    if seg.get("type") == "matte":
+        return _matte_color_tensor(seg.get("matteColor"), matte_width, matte_height)
+
     if seg.get("imageFile"):
         file_path = os.path.join(folder_paths.get_input_directory(), seg["imageFile"])
         if os.path.exists(file_path):
@@ -900,10 +938,16 @@ def _motion_segment_keys(seg: dict) -> set[str]:
     return keys
 
 
+def _is_motion_brush_segment(seg: dict) -> bool:
+    if not isinstance(seg, dict):
+        return False
+    return (seg.get("type") or "image") in ("image", "matte")
+
+
 def _extract_motion_segments_from_timeline(timeline: dict) -> list[dict]:
     out = []
     for seg in timeline.get("segments", []):
-        if not isinstance(seg, dict) or seg.get("type", "image") == "text":
+        if not _is_motion_brush_segment(seg):
             continue
         image_size = seg.get("imageSize") if isinstance(seg.get("imageSize"), dict) else {}
         tracks = _normalise_motion_tracks(seg.get("motionTracks") or seg.get("motion_tracks") or [], image_size)
@@ -911,10 +955,12 @@ def _extract_motion_segments_from_timeline(timeline: dict) -> list[dict]:
             continue
         out.append({
             "id": seg.get("id", ""),
+            "type": seg.get("type", "image"),
             "start": int(round(float(seg.get("start", 0) or 0))),
             "length": int(round(float(seg.get("length", 0) or 0))),
             "prompt": seg.get("prompt", ""),
             "imageFile": seg.get("imageFile", "") or seg.get("videoFile", ""),
+            "matteColor": _normalise_hex_color(seg.get("matteColor")) if seg.get("type") == "matte" else "",
             "imageSize": image_size,
             "pointsToSample": int(round(float(seg.get("motionPointsToSample", 121) or 121))),
             "tracks": tracks,
@@ -922,7 +968,19 @@ def _extract_motion_segments_from_timeline(timeline: dict) -> list[dict]:
     return out
 
 
+def _image_motion_keys_from_timeline(timeline: dict) -> set[str]:
+    keys = set()
+    for seg in timeline.get("segments", []):
+        if not _is_motion_brush_segment(seg):
+            continue
+        keys.update(_motion_segment_keys(seg))
+    return keys
+
+
 def _clip_motion_segment(seg: dict, start_frame: int, duration_frames: int) -> dict | None:
+    seg_type = seg.get("type") or "image"
+    if seg_type not in ("image", "matte"):
+        return None
     try:
         seg_start = int(round(float(seg.get("start", 0) or 0)))
         length = int(round(float(seg.get("length", 0) or 0)))
@@ -944,10 +1002,12 @@ def _clip_motion_segment(seg: dict, start_frame: int, duration_frames: int) -> d
         return None
     return {
         "id": seg.get("id", ""),
+        "type": seg_type,
         "start": int(new_start),
         "length": int(clipped_len),
         "prompt": seg.get("prompt", ""),
         "imageFile": seg.get("imageFile", "") or "",
+        "matteColor": _normalise_hex_color(seg.get("matteColor")) if seg_type == "matte" else "",
         "imageSize": image_size,
         "pointsToSample": int(round(float(seg.get("pointsToSample", 121) or 121))),
         "tracks": tracks,
@@ -966,9 +1026,22 @@ def _build_motion_tracks_payload(
         timeline = json.loads(timeline_data) if timeline_data else {}
     except (json.JSONDecodeError, TypeError):
         timeline = {}
+    if not isinstance(timeline, dict):
+        timeline = {}
+
+    if timeline.get("retakeMode", False):
+        return json.dumps({
+            "version": 1,
+            "start_frame": int(start_frame),
+            "duration_frames": int(duration_frames),
+            "frame_rate": float(frame_rate),
+            "segments": [],
+        })
 
     merged = []
     seen = set()
+    image_segment_keys = _image_motion_keys_from_timeline(timeline)
+    has_timeline_segments = isinstance(timeline.get("segments"), list)
 
     try:
         parsed = json.loads(motion_tracks_data) if motion_tracks_data else {}
@@ -980,6 +1053,8 @@ def _build_motion_tracks_payload(
         if not isinstance(source_seg, dict):
             continue
         keys = _motion_segment_keys(source_seg)
+        if has_timeline_segments and keys.isdisjoint(image_segment_keys):
+            continue
         if not keys.isdisjoint(seen):
             continue
         clipped = _clip_motion_segment(source_seg, int(start_frame), int(duration_frames))
@@ -995,6 +1070,43 @@ def _build_motion_tracks_payload(
         "frame_rate": float(frame_rate),
         "segments": merged,
     })
+
+
+def _motion_payload_has_segments(motion_tracks_payload: str) -> bool:
+    try:
+        parsed = json.loads(motion_tracks_payload) if motion_tracks_payload else {}
+    except (json.JSONDecodeError, TypeError):
+        return False
+    segments = parsed.get("segments", []) if isinstance(parsed, dict) else []
+    return any(isinstance(seg, dict) for seg in segments)
+
+
+def _main_timeline_video_segments(timeline: dict) -> list[dict]:
+    if not isinstance(timeline, dict) or timeline.get("retakeMode", False):
+        return []
+    return [
+        seg for seg in timeline.get("segments", [])
+        if isinstance(seg, dict) and seg.get("type") == "video"
+    ]
+
+
+def _validate_motion_brush_timeline(timeline: dict, motion_tracks_payload: str) -> None:
+    if not _motion_payload_has_segments(motion_tracks_payload):
+        return
+    videos = _main_timeline_video_segments(timeline)
+    if not videos:
+        return
+    names = []
+    for seg in videos[:3]:
+        name = seg.get("fileName") or seg.get("imageFile") or seg.get("videoFile") or seg.get("id") or "video segment"
+        names.append(str(name))
+    suffix = f" ({', '.join(names)})" if names else ""
+    raise ValueError(
+        "LTX Director Motion Brush V2 supports Motion Brush tracks on image and matte clips only. "
+        f"This timeline has {len(videos)} normal video segment(s){suffix} plus Motion Brush tracks. "
+        "Remove the normal timeline video segment(s), clear the Motion Brush tracks, or use Retake Mode for video edits."
+    )
+
 
 class LTXDirectorMotionBrushV2(io.ComfyNode):
     """WYSIWYG timeline variant — segments and lengths come from a visual editor in the node UI."""
@@ -1148,6 +1260,7 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
         motion_tracks_payload = _build_motion_tracks_payload(
             timeline_data, motion_tracks_data, start_frame, duration_frames, frame_rate
         )
+        _validate_motion_brush_timeline(tdata, motion_tracks_payload)
 
         # Extract global_prompt from timeline_data if not connected/empty
         if not global_prompt:
@@ -1162,13 +1275,17 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
         guide_data = {"images": [], "insert_frames": [], "strengths": [], "frame_rate": frame_rate}
         derived_w, derived_h = custom_width, custom_height
         try:
-            img_segs = [
-                s for s in tdata.get("segments", [])
-                if s.get("type", "image") in ("image", "video")
-                and (s.get("imageFile") or s.get("imageB64"))
-                and int(s.get("start", 0)) < start_frame + duration_frames
-                and int(s.get("start", 0)) + int(s.get("length", 1)) > start_frame
-            ]
+            img_segs = []
+            for s in tdata.get("segments", []):
+                seg_type = s.get("type", "image")
+                has_source = seg_type == "matte" or s.get("imageFile") or s.get("imageB64")
+                if (
+                    seg_type in ("image", "video", "matte")
+                    and has_source
+                    and int(s.get("start", 0)) < start_frame + duration_frames
+                    and int(s.get("start", 0)) + int(s.get("length", 1)) > start_frame
+                ):
+                    img_segs.append(s)
             img_segs.sort(key=lambda s: s["start"])
 
             strengths = []
@@ -1185,7 +1302,9 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
                         seg["length"] = max(1, int(seg.get("length", 1)) - offset)
                     tensor = _load_video_tensor(seg, float(frame_rate))
                 else:
-                    tensor = _load_image_tensor(seg)
+                    matte_w = custom_width if custom_width > 0 else (derived_w if derived_w > 0 else 512)
+                    matte_h = custom_height if custom_height > 0 else (derived_h if derived_h > 0 else 512)
+                    tensor = _load_image_tensor(seg, matte_w, matte_h)
 
                 # Apply resize
                 src_h, src_w = tensor.shape[1], tensor.shape[2]
