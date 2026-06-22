@@ -28,6 +28,72 @@ def _normalise_point(point: dict, image_size: dict | None) -> dict[str, float]:
     return {"x": _clamp01(x / max(1.0, img_w)), "y": _clamp01(y / max(1.0, img_h))}
 
 
+def _positive_image_size(image_size: dict | None) -> tuple[float, float] | None:
+    if not isinstance(image_size, dict):
+        return None
+    try:
+        width = float(image_size.get("width") or image_size.get("w") or 0.0)
+        height = float(image_size.get("height") or image_size.get("h") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def _snap_down_to_canvas(value: float, divisible_by: int, canvas_value: int) -> int:
+    canvas_value = max(1, int(canvas_value))
+    div = max(1, int(divisible_by or 1))
+    raw = max(1, int(value))
+    if div > 1:
+        raw = max(div, (raw // div) * div)
+    return max(1, min(canvas_value, raw))
+
+
+def _transform_motion_point_for_resize(
+    point: dict[str, float],
+    image_size: dict | None,
+    resize_method: str | None,
+    canvas_width: int,
+    canvas_height: int,
+    resize_divisible_by: int = 1,
+) -> dict[str, float]:
+    """Map source-image brush coordinates onto the generated guide canvas."""
+
+    method = (resize_method or "maintain aspect ratio").strip().lower()
+    if method not in {"pad", "pad green", "crop"}:
+        return {"x": _clamp01(point["x"]), "y": _clamp01(point["y"])}
+
+    source_size = _positive_image_size(image_size)
+    if source_size is None:
+        return {"x": _clamp01(point["x"]), "y": _clamp01(point["y"])}
+
+    src_w, src_h = source_size
+    canvas_w = max(1, int(canvas_width))
+    canvas_h = max(1, int(canvas_height))
+    x = _clamp01(point["x"])
+    y = _clamp01(point["y"])
+
+    if method in {"pad", "pad green"}:
+        ratio = min(canvas_w / src_w, canvas_h / src_h)
+        inner_w = _snap_down_to_canvas(src_w * ratio, resize_divisible_by, canvas_w)
+        inner_h = _snap_down_to_canvas(src_h * ratio, resize_divisible_by, canvas_h)
+        pad_l = (canvas_w - inner_w) / 2.0
+        pad_t = (canvas_h - inner_h) / 2.0
+        mapped_x = (pad_l + x * max(0, inner_w - 1)) / max(1, canvas_w - 1)
+        mapped_y = (pad_t + y * max(0, inner_h - 1)) / max(1, canvas_h - 1)
+        return {"x": _clamp01(mapped_x), "y": _clamp01(mapped_y)}
+
+    ratio = max(canvas_w / src_w, canvas_h / src_h)
+    scaled_w = max(canvas_w, int(src_w * ratio))
+    scaled_h = max(canvas_h, int(src_h * ratio))
+    crop_l = (scaled_w - canvas_w) / 2.0
+    crop_t = (scaled_h - canvas_h) / 2.0
+    mapped_x = (x * max(0, scaled_w - 1) - crop_l) / max(1, canvas_w - 1)
+    mapped_y = (y * max(0, scaled_h - 1) - crop_t) / max(1, canvas_h - 1)
+    return {"x": _clamp01(mapped_x), "y": _clamp01(mapped_y)}
+
+
 def _catmull_rom(p0: dict, p1: dict, p2: dict, p3: dict, t: float) -> dict[str, float]:
     t2 = t * t
     t3 = t2 * t
@@ -253,15 +319,30 @@ class LTXDirectorMotionBrushV2Guide(io.ComfyNode):
                 continue
 
             image_size = seg.get("imageSize") if isinstance(seg.get("imageSize"), dict) else {}
+            resize_method = seg.get("resizeMethod") or seg.get("resize_method") or "maintain aspect ratio"
+            try:
+                resize_divisible_by = int(round(float(seg.get("resizeDivisibleBy") or seg.get("resize_divisible_by") or 1)))
+            except (TypeError, ValueError):
+                resize_divisible_by = 1
             sampled_tracks = []
             for track in raw_tracks:
                 if not isinstance(track, list) or not track:
                     continue
-                points = [
-                    _normalise_point(point, image_size)
-                    for point in track
-                    if isinstance(point, dict) and "x" in point and "y" in point
-                ]
+                points = []
+                for point in track:
+                    if not isinstance(point, dict) or "x" not in point or "y" not in point:
+                        continue
+                    normalised = _normalise_point(point, image_size)
+                    points.append(
+                        _transform_motion_point_for_resize(
+                            normalised,
+                            image_size,
+                            resize_method,
+                            width,
+                            height,
+                            resize_divisible_by,
+                        )
+                    )
                 if not points:
                     continue
                 sampled_tracks.append(_interpolate(points, local_frames))

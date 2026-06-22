@@ -1040,7 +1040,13 @@ def _image_motion_keys_from_timeline(timeline: dict) -> set[str]:
     return keys
 
 
-def _clip_motion_segment(seg: dict, start_frame: int, duration_frames: int) -> dict | None:
+def _clip_motion_segment(
+    seg: dict,
+    start_frame: int,
+    duration_frames: int,
+    resize_method: str = "maintain aspect ratio",
+    resize_divisible_by: int = 32,
+) -> dict | None:
     seg_type = seg.get("type") or "image"
     if seg_type not in ("image", "matte"):
         return None
@@ -1063,6 +1069,11 @@ def _clip_motion_segment(seg: dict, start_frame: int, duration_frames: int) -> d
     tracks = _normalise_motion_tracks(seg.get("tracks") or [], image_size)
     if not tracks:
         return None
+    method = resize_method or seg.get("resizeMethod") or seg.get("resize_method") or "maintain aspect ratio"
+    try:
+        method_divisible_by = int(round(float(resize_divisible_by or seg.get("resizeDivisibleBy") or seg.get("resize_divisible_by") or 32)))
+    except (TypeError, ValueError):
+        method_divisible_by = int(resize_divisible_by or 32)
     return {
         "id": seg.get("id", ""),
         "type": seg_type,
@@ -1072,6 +1083,8 @@ def _clip_motion_segment(seg: dict, start_frame: int, duration_frames: int) -> d
         "imageFile": seg.get("imageFile", "") or "",
         "matteColor": _normalise_hex_color(seg.get("matteColor")) if seg_type == "matte" else "",
         "imageSize": image_size,
+        "resizeMethod": str(method or "maintain aspect ratio"),
+        "resizeDivisibleBy": max(1, method_divisible_by),
         "pointsToSample": int(round(float(seg.get("pointsToSample", 121) or 121))),
         "tracks": tracks,
     }
@@ -1083,6 +1096,8 @@ def _build_motion_tracks_payload(
     start_frame: int,
     duration_frames: int,
     frame_rate: float,
+    resize_method: str = "maintain aspect ratio",
+    resize_divisible_by: int = 32,
 ) -> str:
     """Return sparse per-segment motion tracks clipped to the current Director range."""
     try:
@@ -1091,6 +1106,15 @@ def _build_motion_tracks_payload(
         timeline = {}
     if not isinstance(timeline, dict):
         timeline = {}
+
+    if timeline.get("motionBrushMode") is False:
+        return json.dumps({
+            "version": 1,
+            "start_frame": int(start_frame),
+            "duration_frames": int(duration_frames),
+            "frame_rate": float(frame_rate),
+            "segments": [],
+        })
 
     if timeline.get("retakeMode", False):
         return json.dumps({
@@ -1120,7 +1144,13 @@ def _build_motion_tracks_payload(
             continue
         if not keys.isdisjoint(seen):
             continue
-        clipped = _clip_motion_segment(source_seg, int(start_frame), int(duration_frames))
+        clipped = _clip_motion_segment(
+            source_seg,
+            int(start_frame),
+            int(duration_frames),
+            resize_method,
+            resize_divisible_by,
+        )
         if not clipped:
             continue
         merged.append(clipped)
@@ -1169,6 +1199,20 @@ def _validate_motion_brush_timeline(timeline: dict, motion_tracks_payload: str) 
         f"This timeline has {len(videos)} normal video segment(s){suffix} plus Motion Brush tracks. "
         "Remove the normal timeline video segment(s), clear the Motion Brush tracks, or use Retake Mode for video edits."
     )
+
+
+def _effective_resize_method_for_motion_brush(resize_method: str, motion_tracks_payload: str) -> str:
+    """Use the only resize path proven stable with sparse motion-track IC-LoRA."""
+
+    requested = resize_method or "maintain aspect ratio"
+    if _motion_payload_has_segments(motion_tracks_payload) and requested != "maintain aspect ratio":
+        log.warning(
+            "[LTXDirector] Motion Brush tracks are present, so resize_method=%r is being "
+            "treated as 'maintain aspect ratio' to keep visual guides and sparse-track guides aligned.",
+            requested,
+        )
+        return "maintain aspect ratio"
+    return requested
 
 
 class LTXDirectorMotionBrushV2(io.ComfyNode):
@@ -1321,8 +1365,28 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
         is_retake_active = is_retake_mode and tdata.get("retakeVideo") is not None
 
         motion_tracks_payload = _build_motion_tracks_payload(
-            timeline_data, motion_tracks_data, start_frame, duration_frames, frame_rate
+            timeline_data,
+            motion_tracks_data,
+            start_frame,
+            duration_frames,
+            frame_rate,
+            resize_method,
+            divisible_by,
         )
+        effective_resize_method = _effective_resize_method_for_motion_brush(
+            resize_method,
+            motion_tracks_payload,
+        )
+        if effective_resize_method != resize_method:
+            motion_tracks_payload = _build_motion_tracks_payload(
+                timeline_data,
+                motion_tracks_data,
+                start_frame,
+                duration_frames,
+                frame_rate,
+                effective_resize_method,
+                divisible_by,
+            )
         _validate_motion_brush_timeline(tdata, motion_tracks_payload)
 
         # Extract global_prompt from timeline_data if not connected/empty
@@ -1363,7 +1427,7 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
 
                 if custom_width > 0 and custom_height > 0:
                     # Both dimensions set — apply selected resize_method (pad, crop, stretch, maintain AR)
-                    tensor = _resize_image(tensor, custom_width, custom_height, resize_method, divisible_by)
+                    tensor = _resize_image(tensor, custom_width, custom_height, effective_resize_method, divisible_by)
                 elif custom_width > 0:
                     # Width only — scale height from AR, snap both, then resize to exact dimensions
                     tgt_w = snap(custom_width, divisible_by)
@@ -1458,7 +1522,7 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
 
                 # Route the dummy tensor through the exact same resizing pipeline
                 if custom_width > 0 and custom_height > 0:
-                    tensor = _resize_image(tensor, custom_width, custom_height, resize_method, divisible_by)
+                    tensor = _resize_image(tensor, custom_width, custom_height, effective_resize_method, divisible_by)
                 elif custom_width > 0:
                     tgt_w = snap(custom_width, divisible_by)
                     tgt_h = snap(int(src_h * tgt_w / src_w), divisible_by)
@@ -1637,7 +1701,7 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
                     raise e
 
         # --- Motion guide output from timeline video segments ---
-        motion_guide_data = {"segments": [], "frame_rate": float(frame_rate), "duration_frames": int(duration_frames), "resize_method": resize_method}
+        motion_guide_data = {"segments": [], "frame_rate": float(frame_rate), "duration_frames": int(duration_frames), "resize_method": effective_resize_method}
         try:
             tdata = json.loads(timeline_data) if timeline_data else {}
             if use_custom_motion:
@@ -1672,7 +1736,7 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
         guide_data["timeline_data"] = timeline_data
         guide_data["start_frame"] = start_frame
         guide_data["duration_frames"] = duration_frames
-        guide_data["resize_method"] = resize_method
+        guide_data["resize_method"] = effective_resize_method
 
         return io.NodeOutput(patched, conditioning, latent, audio_latent, guide_data, motion_guide_data, float(frame_rate), audio_out, motion_tracks_payload)
 

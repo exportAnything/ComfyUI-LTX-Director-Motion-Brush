@@ -36,22 +36,37 @@ if not hasattr(PromptServer, "instance"):
 sys.path.insert(1, str(CUSTOM_NODES))
 
 from LTX_Director_v2_motion_brush import ltx_director_guide as director_guide  # noqa: E402
+from LTX_Director_v2_motion_brush import ltx_director_motion_brush_guides_v2 as motion_guides  # noqa: E402
 from LTX_Director_v2_motion_brush import ltx_director_motion_brush_v2 as motion_brush  # noqa: E402
 
 
-def build_payload(timeline: dict, motion: dict | None = None, start=0, duration=120) -> dict:
+def build_payload(
+    timeline: dict,
+    motion: dict | None = None,
+    start=0,
+    duration=120,
+    resize_method="maintain aspect ratio",
+    resize_divisible_by=32,
+) -> dict:
     raw = motion_brush._build_motion_tracks_payload(
         json.dumps(timeline),
         json.dumps(motion or {"version": 1, "segments": []}),
         start,
         duration,
         24,
+        resize_method,
+        resize_divisible_by,
     )
     return json.loads(raw)
 
 
 def assert_equal(actual, expected, label: str) -> None:
     if actual != expected:
+        raise AssertionError(f"{label}: expected {expected!r}, got {actual!r}")
+
+
+def assert_close(actual: float, expected: float, label: str, tolerance: float = 1e-6) -> None:
+    if abs(actual - expected) > tolerance:
         raise AssertionError(f"{label}: expected {expected!r}, got {actual!r}")
 
 
@@ -155,6 +170,12 @@ def main() -> None:
     assert_equal(matte_payload["type"], "matte", "matte payload type")
     assert_equal(matte_payload["matteColor"], "#00ff00", "matte payload color")
 
+    brush_off_payload = build_payload({**mixed_timeline, "motionBrushMode": False}, stale_motion)
+    assert_equal(brush_off_payload["segments"], [], "motion brush mode off suppresses payload")
+
+    brush_on_payload = build_payload({**mixed_timeline, "motionBrushMode": True}, stale_motion)
+    assert_equal([seg["id"] for seg in brush_on_payload["segments"]], ["img1", "legacy", "matte1"], "motion brush mode on preserves payload")
+
     matte_only = {
         "retakeMode": False,
         "segments": [
@@ -217,6 +238,43 @@ def main() -> None:
     clipped_matte_by_id = {seg["id"]: seg for seg in clipped_matte["segments"]}
     assert_equal(clipped_matte_by_id["matte1"]["start"], 10, "range clip matte start")
     assert_equal(clipped_matte_by_id["matte1"]["length"], 20, "range clip matte length")
+
+    resized_payload = build_payload(mixed_timeline, start=0, duration=60, resize_method="pad", resize_divisible_by=16)
+    resized_img = next(seg for seg in resized_payload["segments"] if seg["id"] == "img1")
+    assert_equal(resized_img["resizeMethod"], "pad", "payload records resize method")
+    assert_equal(resized_img["resizeDivisibleBy"], 16, "payload records resize divisibility")
+    assert_equal(
+        motion_brush._effective_resize_method_for_motion_brush("pad", json.dumps(resized_payload)),
+        "maintain aspect ratio",
+        "motion brush clamps unsafe resize methods",
+    )
+    assert_equal(
+        motion_brush._effective_resize_method_for_motion_brush("crop", '{"version":1,"segments":[]}'),
+        "crop",
+        "non-brush timelines keep requested resize method",
+    )
+
+    pad_left = motion_guides._transform_motion_point_for_resize(
+        {"x": 0.0, "y": 0.5},
+        {"width": 100, "height": 100},
+        "pad",
+        200,
+        100,
+        1,
+    )
+    assert_close(pad_left["x"], 50 / 199, "pad remaps left edge into padded canvas")
+    assert_close(pad_left["y"], 49.5 / 99, "pad preserves vertical midpoint")
+
+    crop_top = motion_guides._transform_motion_point_for_resize(
+        {"x": 0.5, "y": 0.0},
+        {"width": 100, "height": 100},
+        "crop",
+        200,
+        100,
+        1,
+    )
+    assert_close(crop_top["x"], 99.5 / 199, "crop preserves horizontal midpoint")
+    assert_close(crop_top["y"], 0.0, "crop clips cropped top edge")
 
     retake_mask = {"retakeStart": 24, "retakeLength": 48}
     assert_equal(

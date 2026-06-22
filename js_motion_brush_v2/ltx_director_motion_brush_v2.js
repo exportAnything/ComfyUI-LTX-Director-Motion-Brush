@@ -864,6 +864,7 @@ const ICONS = {
   trash: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`,
   text: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg>`,
   matte: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect></svg>`,
+  brush: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.5 2.5a2.1 2.1 0 0 1 3 3L13 14l-4 1 1-4 8.5-8.5z"></path><path d="M3 21c3.5 0 5.5-1.2 6-4"></path></svg>`,
   play: `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`,
   pause: `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`,
   loop: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12A9 9 0 0 0 6 5.3L3 8"></path><polyline points="3 3 3 8 8 8"></polyline><path d="M3 12a9 9 0 0 0 15 6.7l3-2.7"></path><polyline points="21 21 21 16 16 16"></polyline></svg>`,
@@ -895,6 +896,8 @@ function parseInitial(jsonStr) {
     showFilenames: true,
     overrideAudio: false,
     inpaint_audio: true,
+    motionBrushMode: undefined,
+    resizeMethodBeforeMotionBrush: "",
     retakeMode: false,
     retakeStart: 24,
     retakeLength: 48,
@@ -917,6 +920,8 @@ function parseInitial(jsonStr) {
       if (p.showFilenames !== undefined) parsed.showFilenames = p.showFilenames;
       if (p.overrideAudio !== undefined) parsed.overrideAudio = p.overrideAudio;
       if (p.inpaint_audio !== undefined) parsed.inpaint_audio = p.inpaint_audio;
+      if (p.motionBrushMode !== undefined) parsed.motionBrushMode = p.motionBrushMode;
+      if (p.resizeMethodBeforeMotionBrush !== undefined) parsed.resizeMethodBeforeMotionBrush = p.resizeMethodBeforeMotionBrush;
       if (p.retakeMode !== undefined) parsed.retakeMode = p.retakeMode;
       if (p.retakeStart !== undefined) parsed.retakeStart = p.retakeStart;
       if (p.retakeLength !== undefined) parsed.retakeLength = p.retakeLength;
@@ -1062,6 +1067,7 @@ class TimelineEditor {
     this.segmentLengthsWidget = this.node.widgets.find(w => w.name === "segment_lengths");
     this.guideStrengthWidget = this.node.widgets.find(w => w.name === "guide_strength");
     this.displayModeWidget = this.node.widgets.find(w => w.name === "display_mode");
+    this.resizeMethodWidget = this.node.widgets.find(w => w.name === "resize_method");
 
     // Track the last-known frame rate so we can compute the rescale ratio
     // inside the frameRateWidget callback (the widget value is already updated
@@ -1094,6 +1100,9 @@ class TimelineEditor {
     this.motionView = { x: 0, y: 0, w: 1, h: 1 };
     this.motionButtons = {};
     this.motionHistory = new Map();
+    const savedMotionMode = this.timeline.motionBrushMode;
+    this.motionBrushMode = savedMotionMode === true || (savedMotionMode === undefined && this.hasImageMotionTrackPoints());
+    this._resizeMethodBeforeMotionBrush = this.timeline.resizeMethodBeforeMotionBrush || this.node.properties.resizeMethodBeforeMotionBrush || null;
 
     // Treat this.timeline (from timeline_data widget) as the absolute source of truth!
     this.mainTrackEnabled = this.timeline.mainTrackEnabled !== false;
@@ -1104,6 +1113,7 @@ class TimelineEditor {
     this.node.properties.mainTrackEnabled = this.mainTrackEnabled;
     this.node.properties.audioTrackEnabled = this.audioTrackEnabled;
     this.node.properties.motionTrackEnabled = this.motionTrackEnabled;
+    this.node.properties.motionBrushMode = this.motionBrushMode;
     if (this.timeline.showFilenames !== undefined) {
       this.node.properties.showFilenames = this.timeline.showFilenames;
     }
@@ -1129,6 +1139,8 @@ class TimelineEditor {
 
     this.createDOM();
     this.updateRetakeUIState();
+    this.syncMotionBrushResizeLock(true);
+    if (this.updateMotionBrushToggleStyle) this.updateMotionBrushToggleStyle();
     if (this.timeline.segments.length > 0) {
       this.selectedIndex = 0;
     }
@@ -1140,6 +1152,17 @@ class TimelineEditor {
     setTimeout(() => this.hideSettingsWidgets(), 0);
 
     let isSyncing = false;
+
+    const origResizeMethodCallback = this.resizeMethodWidget?.callback;
+    if (this.resizeMethodWidget) {
+      this.resizeMethodWidget.callback = (...args) => {
+        if (this.isMotionBrushModeActive() && this.resizeMethodWidget.value !== "maintain aspect ratio") {
+          this.setWidgetValueSilently(this.resizeMethodWidget, "maintain aspect ratio", false);
+          return;
+        }
+        if (origResizeMethodCallback) origResizeMethodCallback.apply(this.resizeMethodWidget, args);
+      };
+    }
 
     // --- Start Callbacks ---
     const origStartFramesCallback = this.startFramesWidget?.callback;
@@ -2504,6 +2527,15 @@ class TimelineEditor {
     addMatteBtn.addEventListener("click", () => this.addMatteSegmentFreeSpace());
     this.addMatteBtn = addMatteBtn;
 
+    const motionBrushBtn = document.createElement("button");
+    motionBrushBtn.className = "pr-btn";
+    motionBrushBtn.innerHTML = `${ICONS.brush} Motion Brush`;
+    motionBrushBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.setMotionBrushMode(!this.motionBrushMode);
+    });
+    this.motionBrushBtn = motionBrushBtn;
+
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "pr-btn pr-btn-danger";
     deleteBtn.innerHTML = `${ICONS.trash} Delete`;
@@ -2517,6 +2549,7 @@ class TimelineEditor {
     actionGroup.appendChild(uploadBtn);
     actionGroup.appendChild(addTextBtn);
     actionGroup.appendChild(addMatteBtn);
+    actionGroup.appendChild(motionBrushBtn);
     actionGroup.appendChild(uploadAudioBtn);
     actionGroup.appendChild(uploadVideoBtn);
     actionGroup.appendChild(uploadMotionBtn);
@@ -4160,6 +4193,83 @@ class TimelineEditor {
     );
   }
 
+  isMotionBrushModeActive() {
+    return !!this.motionBrushMode && !this.retakeMode;
+  }
+
+  setWidgetValueSilently(widget, value, fireCallback = false) {
+    if (!widget) return;
+    const oldValue = widget.value;
+    widget.value = value;
+    if (this.node?.properties && widget.name) this.node.properties[widget.name] = value;
+    if (fireCallback && this.node?.onWidgetChanged && oldValue !== value) {
+      this.node.onWidgetChanged(widget.name, value, oldValue, widget);
+    }
+    if (fireCallback && widget.callback && oldValue !== value) {
+      try { widget.callback(value); } catch (_) { }
+    }
+  }
+
+  syncMotionBrushResizeLock(fireCallback = false) {
+    const widget = this.resizeMethodWidget || this.node.widgets?.find(w => w.name === "resize_method");
+    if (!widget) return;
+    this.resizeMethodWidget = widget;
+
+    const locked = this.isMotionBrushModeActive();
+    if (locked) {
+      if (widget.value && widget.value !== "maintain aspect ratio") {
+        this._resizeMethodBeforeMotionBrush = widget.value;
+        this.timeline.resizeMethodBeforeMotionBrush = widget.value;
+        if (this.node.properties) this.node.properties.resizeMethodBeforeMotionBrush = widget.value;
+      }
+      this.setWidgetValueSilently(widget, "maintain aspect ratio", fireCallback);
+      widget.disabled = true;
+      if (!widget.options) widget.options = {};
+      widget.options.disabled = true;
+      widget.tooltip = "Locked by Motion Brush mode";
+      if (widget.element) {
+        widget.element.disabled = true;
+        widget.element.title = "Locked by Motion Brush mode";
+      }
+    } else {
+      widget.disabled = false;
+      if (widget.options) widget.options.disabled = false;
+      widget.tooltip = "";
+      if (widget.element) {
+        widget.element.disabled = false;
+        widget.element.title = "";
+      }
+
+      const previous = this._resizeMethodBeforeMotionBrush;
+      if (previous && previous !== "maintain aspect ratio" && widget.value === "maintain aspect ratio") {
+        this.setWidgetValueSilently(widget, previous, fireCallback);
+      }
+    }
+  }
+
+  updateMotionBrushToggleStyle() {
+    if (!this.motionBrushBtn) return;
+    const active = this.isMotionBrushModeActive();
+    this.motionBrushBtn.classList.toggle("toggle-on", active);
+    this.motionBrushBtn.disabled = !!this.retakeMode;
+    this.motionBrushBtn.style.display = this.retakeMode ? "none" : "";
+    this.motionBrushBtn.title = active
+      ? "Motion Brush ON: resize method is locked to maintain aspect ratio"
+      : "Enable Motion Brush for image and matte clips";
+  }
+
+  setMotionBrushMode(enabled) {
+    this.motionBrushMode = !!enabled;
+    this.timeline.motionBrushMode = this.motionBrushMode;
+    if (this.node.properties) this.node.properties.motionBrushMode = this.motionBrushMode;
+    this.syncMotionBrushResizeLock(true);
+    this.syncMotionTracksData();
+    this.updateMotionBrushToggleStyle();
+    this.updateMotionBrushUI();
+    this.commitChanges();
+    this.render();
+  }
+
   getMotionHistoryKey(seg = this.getSelectedMotionSegment()) {
     if (!seg) return "";
     return seg.id ? `id:${seg.id}` : `index:${this.selectedIndex}`;
@@ -4223,20 +4333,22 @@ class TimelineEditor {
 
   syncMotionTracksData() {
     if (!this.motionTracksWidget) return;
-    const segments = (this.timeline.segments || [])
-      .filter((seg) => isMotionBrushEligibleSegment(seg) && Array.isArray(seg.motionTracks) && seg.motionTracks.some((track) => track.length > 0))
-      .map((seg) => ({
-        id: seg.id || "",
-        type: seg.type || "image",
-        start: Math.round(seg.start || 0),
-        length: Math.round(seg.length || 0),
-        prompt: seg.prompt || "",
-        imageFile: seg.imageFile || "",
-        matteColor: (seg.type || "image") === "matte" ? normalizeMatteColor(seg.matteColor) : undefined,
-        imageSize: seg.imageSize || {},
-        pointsToSample: seg.motionPointsToSample || 121,
-        tracks: normalizeMotionTracks(seg.motionTracks),
-      }));
+    const segments = this.isMotionBrushModeActive()
+      ? (this.timeline.segments || [])
+        .filter((seg) => isMotionBrushEligibleSegment(seg) && Array.isArray(seg.motionTracks) && seg.motionTracks.some((track) => track.length > 0))
+        .map((seg) => ({
+          id: seg.id || "",
+          type: seg.type || "image",
+          start: Math.round(seg.start || 0),
+          length: Math.round(seg.length || 0),
+          prompt: seg.prompt || "",
+          imageFile: seg.imageFile || "",
+          matteColor: (seg.type || "image") === "matte" ? normalizeMatteColor(seg.matteColor) : undefined,
+          imageSize: seg.imageSize || {},
+          pointsToSample: seg.motionPointsToSample || 121,
+          tracks: normalizeMotionTracks(seg.motionTracks),
+        }))
+      : [];
     const payload = JSON.stringify({
       version: 1,
       duration_frames: this.getDurationFrames(),
@@ -4348,7 +4460,7 @@ class TimelineEditor {
     if (!this.motionPanel || !this.motionCanvas) return;
     const mainSeg = this.getSelectedMainSegment();
     const seg = this.getSelectedMotionSegment();
-    const visible = !!mainSeg && !this.retakeMode;
+    const visible = this.isMotionBrushModeActive() && !!mainSeg && !this.retakeMode;
     this.motionPanel.classList.toggle("hidden", !visible);
     if (!visible) {
       if (this.motionWarning) this.motionWarning.style.display = "none";
@@ -6537,6 +6649,7 @@ class TimelineEditor {
     if (this.uploadBtn) this.uploadBtn.style.display = isRetake ? "none" : "";
     if (this.addTextBtn) this.addTextBtn.style.display = isRetake ? "none" : "";
     if (this.addMatteBtn) this.addMatteBtn.style.display = isRetake ? "none" : "";
+    if (this.motionBrushBtn) this.motionBrushBtn.style.display = isRetake ? "none" : "";
     if (this.uploadAudioBtn) this.uploadAudioBtn.style.display = isRetake ? "none" : "";
     if (this.uploadMotionBtn) this.uploadMotionBtn.style.display = isRetake ? "none" : "";
     if (this.deleteBtn) this.deleteBtn.style.display = isRetake ? "none" : "";
@@ -6547,6 +6660,9 @@ class TimelineEditor {
 
     // 3. Update the toggle button class/title
     if (this.updateRetakeStyle) this.updateRetakeStyle();
+    this.syncMotionBrushResizeLock(true);
+    this.syncMotionTracksData();
+    if (this.updateMotionBrushToggleStyle) this.updateMotionBrushToggleStyle();
 
     // 4. Update the prompt labels
     if (this.segmentPromptLabel) {
@@ -9708,6 +9824,7 @@ class TimelineEditor {
   // --- Backend Data Sync ---
   commitChanges(skipRender = false) {
     if (this._suppressCommit) return;
+    this.syncMotionBrushResizeLock(false);
     // Deduplicate segments by ID to clean up any duplicates created by the previous onseeked bug
     this.timeline.segments = this.timeline.segments.filter((seg, index, self) => index === self.findIndex((s) => s.id === seg.id));
     if (this.timeline.audioSegments) {
@@ -9815,6 +9932,8 @@ class TimelineEditor {
       showFilenames: !!this.node.properties.showFilenames,
       overrideAudio: !!this.node.properties.overrideAudio,
       inpaint_audio: !!(this.node.widgets?.find(w => w.name === "inpaint_audio")?.value),
+      motionBrushMode: !!this.motionBrushMode,
+      resizeMethodBeforeMotionBrush: this._resizeMethodBeforeMotionBrush || "",
       global_prompt: this.retakeMode ? (this.timeline.global_prompt || "") : (this.globalPromptInput ? this.globalPromptInput.value : ""),
       retake_global_prompt: this.retakeMode ? (this.globalPromptInput ? this.globalPromptInput.value : "") : (this.timeline.retake_global_prompt || ""),
       retakeMode: this.retakeMode,
