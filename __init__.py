@@ -5,6 +5,7 @@ from .ltx_director_motion_brush_v2 import LTXDirectorMotionBrushV2
 from .ltx_director_motion_brush_guides_v2 import (
     LTXDirectorMotionBrushV2Guide,
     LTXDirectorMotionBrushV2GuideAttention,
+    LTXDirectorMotionBrushV2RetakeSourcePreview,
     LTXDirectorMotionBrushV2SafeDownscaleFactor,
 )
 from .ltx_director_guide import (
@@ -19,6 +20,7 @@ class LTXDirectorMotionBrushV2Extension(ComfyExtension):
         return [
             LTXDirectorMotionBrushV2,
             LTXDirectorMotionBrushV2Guide,
+            LTXDirectorMotionBrushV2RetakeSourcePreview,
             LTXDirectorMotionBrushV2GuideAttention,
             LTXDirectorMotionBrushV2SafeDownscaleFactor,
             LTXDirectorMotionBrushV2DirectorGuide,
@@ -33,6 +35,7 @@ async def comfy_entrypoint() -> LTXDirectorMotionBrushV2Extension:
 NODE_CLASS_MAPPINGS = {
     "LTXDirectorMotionBrushV2": LTXDirectorMotionBrushV2,
     "LTXDirectorMotionBrushV2Guide": LTXDirectorMotionBrushV2Guide,
+    "LTXDirectorMotionBrushV2RetakeSourcePreview": LTXDirectorMotionBrushV2RetakeSourcePreview,
     "LTXDirectorMotionBrushV2GuideAttention": LTXDirectorMotionBrushV2GuideAttention,
     "LTXDirectorMotionBrushV2SafeDownscaleFactor": LTXDirectorMotionBrushV2SafeDownscaleFactor,
     "LTXDirectorMotionBrushV2DirectorGuide": LTXDirectorMotionBrushV2DirectorGuide,
@@ -42,6 +45,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "LTXDirectorMotionBrushV2": "LTX Director Motion Brush V2",
     "LTXDirectorMotionBrushV2Guide": "LTX Director Motion Brush V2 Guide",
+    "LTXDirectorMotionBrushV2RetakeSourcePreview": "LTX Director Motion Brush V2 Retake Source Preview",
     "LTXDirectorMotionBrushV2GuideAttention": "LTX Director Motion Brush V2 Guide Attention",
     "LTXDirectorMotionBrushV2SafeDownscaleFactor": "LTX Director Motion Brush V2 Safe Downscale Factor",
     "LTXDirectorMotionBrushV2DirectorGuide": "LTX Director Motion Brush V2 Director Guide",

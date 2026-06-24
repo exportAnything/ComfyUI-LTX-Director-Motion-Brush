@@ -10,6 +10,8 @@ import json
 import sys
 from pathlib import Path
 
+import torch
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CUSTOM_NODES = ROOT.parent
@@ -110,6 +112,7 @@ def main() -> None:
                 "length": 60,
                 "imageFile": "whatdreamscost/a.png",
                 "motionTracks": image_track,
+                "motionCarryFrames": 24,
             },
             {
                 "id": "legacy",
@@ -166,6 +169,8 @@ def main() -> None:
 
     mixed_payload = build_payload(mixed_timeline, stale_motion)
     assert_equal([seg["id"] for seg in mixed_payload["segments"]], ["img1", "legacy", "matte1"], "mixed image/matte-only ids")
+    img_payload = next(seg for seg in mixed_payload["segments"] if seg["id"] == "img1")
+    assert_equal(img_payload["motionCarryFrames"], 24, "image payload preserves carry motion frames")
     matte_payload = next(seg for seg in mixed_payload["segments"] if seg["id"] == "matte1")
     assert_equal(matte_payload["type"], "matte", "matte payload type")
     assert_equal(matte_payload["matteColor"], "#00ff00", "matte payload color")
@@ -293,6 +298,81 @@ def main() -> None:
         "retake no-overlap interval",
     )
 
+    captured_source_preview = {}
+    original_loader = motion_guides._load_motion_video_frames
+
+    def fake_retake_loader(video_file, trim_start_frames, length_frames, director_fps, resample_mode="nearest"):
+        captured_source_preview.update(
+            {
+                "video_file": video_file,
+                "trim_start_frames": trim_start_frames,
+                "length_frames": length_frames,
+                "director_fps": director_fps,
+                "resample_mode": resample_mode,
+            }
+        )
+        return torch.full((int(length_frames), 2, 4, 3), 0.25, dtype=torch.float32)
+
+    motion_guides._load_motion_video_frames = fake_retake_loader
+    try:
+        retake_preview = motion_guides.LTXDirectorMotionBrushV2RetakeSourcePreview.execute(
+            {
+                "timeline_data": json.dumps(
+                    {
+                        "retakeMode": True,
+                        "retakeVideo": {"imageFile": "whatdreamscost/source.mp4"},
+                    }
+                ),
+                "start_frame": 12,
+                "duration_frames": 7,
+                "frame_rate": 24,
+                "resize_method": "maintain aspect ratio",
+            },
+            width=4,
+            height=2,
+            duration_frames=0,
+            resize_method="match director guide",
+            resample_mode="nearest",
+            on_missing="error",
+        )
+    finally:
+        motion_guides._load_motion_video_frames = original_loader
+
+    preview_frames, preview_video, _, preview_summary_raw = retake_preview.result
+    assert_equal(list(preview_frames.shape), [8, 2, 4, 3], "retake source preview shape")
+    assert_close(float(preview_frames.mean()), 0.25, "retake source preview pixels")
+    preview_components = preview_video.get_components()
+    assert_equal(list(preview_components.images.shape), [8, 2, 4, 3], "retake source preview video shape")
+    assert_close(float(preview_components.frame_rate), 24.0, "retake source preview video fps")
+    assert_equal(
+        captured_source_preview,
+        {
+            "video_file": "whatdreamscost/source.mp4",
+            "trim_start_frames": 12,
+            "length_frames": 8,
+            "director_fps": 24.0,
+            "resample_mode": "nearest",
+        },
+        "retake source preview load request",
+    )
+    preview_summary = json.loads(preview_summary_raw)
+    assert_equal(preview_summary["status"], "ok", "retake source preview status")
+    assert_equal(preview_summary["resize_method"], "pad", "retake source preview maintain-ar fallback")
+
+    missing_preview = motion_guides.LTXDirectorMotionBrushV2RetakeSourcePreview.execute(
+        {"timeline_data": json.dumps({"retakeMode": False}), "duration_frames": 2},
+        width=4,
+        height=2,
+        duration_frames=0,
+        resize_method="match director guide",
+        resample_mode="nearest",
+        on_missing="blank frame",
+    )
+    missing_frames, missing_video, _, missing_summary_raw = missing_preview.result
+    assert_equal(list(missing_frames.shape), [3, 2, 4, 3], "missing retake source placeholder shape")
+    assert_equal(list(missing_video.get_components().images.shape), [3, 2, 4, 3], "missing retake source placeholder video shape")
+    assert_equal(json.loads(missing_summary_raw)["status"], "missing", "missing retake source placeholder status")
+
     matte = motion_brush._load_image_tensor({"type": "matte", "matteColor": "#0f0"}, 64, 32)
     assert_equal(list(matte.shape), [1, 32, 64, 3], "matte tensor shape")
     matte_rgb = [round(float(v), 4) for v in matte[0, 0, 0].tolist()]
@@ -349,6 +429,94 @@ def main() -> None:
         motion_brush._segment_guide_strength({"id": "matte_old", "type": "matte"}, 3, fallback_strengths),
         0.0,
         "matte guide strength default",
+    )
+    assert_equal(
+        motion_guides._motion_segment_local_frame_count({"start": 0, "length": 120}, 120, 241),
+        104,
+        "adjacent motion guide segment leaves a blank temporal guard before the boundary",
+    )
+    assert_equal(
+        motion_guides._motion_segment_frame_counts({"start": 0, "length": 120}, 120, 241),
+        (120, 104),
+        "adjacent motion guide samples full segment but renders only guarded frames",
+    )
+    assert_equal(
+        motion_guides._motion_segment_frame_counts({"start": 0, "length": 120, "motionCarryFrames": 16}, 120, 241),
+        (120, 120),
+        "carry motion 16 reaches the next segment boundary",
+    )
+    assert_equal(
+        motion_guides._motion_segment_frame_counts({"start": 0, "length": 120, "motionCarryFrames": 24}, 120, 241),
+        (128, 128),
+        "carry motion above 16 intentionally renders into the next segment",
+    )
+    assert_equal(
+        motion_guides._motion_segment_local_frame_count({"start": 120, "length": 120}, None, 241),
+        121,
+        "final motion guide segment keeps terminal endpoint frame",
+    )
+    boundary_payload = json.dumps(
+        {
+            "version": 1,
+            "duration_frames": 240,
+            "segments": [
+                {"id": "a", "start": 0, "length": 120, "tracks": [[{"x": 0.0, "y": 0.0}]]},
+                {"id": "b", "start": 120, "length": 120, "tracks": [[{"x": 1.0, "y": 1.0}]]},
+            ],
+        }
+    )
+    boundary_out = motion_guides.LTXDirectorMotionBrushV2Guide.execute(
+        boundary_payload,
+        width=32,
+        height=16,
+        duration_frames=240,
+        trail_frames=0,
+        min_radius=1,
+        max_radius=1,
+    )
+    boundary_frames = boundary_out.result[0]
+    assert_close(float(boundary_frames[103, :3, :3, :].sum()), 3.0, "first motion guide segment reaches its last rendered frame")
+    assert_close(float(boundary_frames[104, :3, :3, :].sum()), 0.0, "first motion guide segment leaves a blank guard band")
+    assert_close(float(boundary_frames[120, :3, :3, :].sum()), 0.0, "first motion guide segment does not bleed into next segment")
+    if float(boundary_frames[120, -3:, -3:, :].sum()) <= 0.0:
+        raise AssertionError("second motion guide segment should begin on its first frame")
+    carry_payload = json.dumps(
+        {
+            "version": 1,
+            "duration_frames": 240,
+            "segments": [
+                {"id": "a", "start": 0, "length": 120, "motionCarryFrames": 24, "tracks": [[{"x": 0.0, "y": 0.0}]]},
+                {"id": "b", "start": 120, "length": 120, "tracks": [[{"x": 1.0, "y": 1.0}]]},
+            ],
+        }
+    )
+    carry_out = motion_guides.LTXDirectorMotionBrushV2Guide.execute(
+        carry_payload,
+        width=32,
+        height=16,
+        duration_frames=240,
+        trail_frames=0,
+        min_radius=1,
+        max_radius=1,
+    )
+    carry_frames = carry_out.result[0]
+    if float(carry_frames[127, :3, :3, :].sum()) <= 0.0:
+        raise AssertionError("carry motion should render the first segment into the next segment")
+    assert_close(float(carry_frames[128, :3, :3, :].sum()), 0.0, "carry motion clamps to the configured carry window")
+    assert_equal(
+        motion_brush._segment_guide_insert_frames({"type": "image", "start": 120, "length": 120}, 0, 360),
+        [120],
+        "normal image guide emits one start keyframe",
+    )
+    assert_equal(
+        motion_brush._segment_guide_insert_frames({"type": "image", "start": 120, "length": 120, "holdImage": True}, 0, 360),
+        [120],
+        "retired holdImage flag no longer adds extra guide keyframes",
+    )
+    assert_equal(
+        motion_brush._segment_guide_insert_frames({"type": "image", "start": 120, "length": 120, "holdImage": True, "isEndFrame": True}, 0, 360),
+        [239],
+        "end-frame image guide preserves legacy end-frame behavior",
     )
 
     print("Phase 3 motion payload guardrails passed")

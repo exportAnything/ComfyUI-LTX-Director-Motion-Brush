@@ -64,6 +64,7 @@ except Exception:
 # Custom socket type shared with LTXSequencer
 GuideData = io.Custom("GUIDE_DATA")
 MotionGuideData = io.Custom("MOTION_GUIDE_DATA")
+MOTION_CARRY_MAX_FRAMES = 48
 
 # --- File Check Endpoint for Deduplication ---
 # Route provided by installed upstream LTX Director v2 package
@@ -1007,6 +1008,36 @@ def _segment_guide_strength(seg: dict, idx: int, fallback_strengths: list[float]
     return default
 
 
+def _segment_motion_carry_frames(seg: dict) -> int:
+    try:
+        return max(0, min(MOTION_CARRY_MAX_FRAMES, int(round(float(seg.get("motionCarryFrames", 0) or 0)))))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _segment_guide_insert_frames(seg: dict, start_frame: int, duration_frames: int) -> list[int]:
+    return [frame for frame, _ in _segment_guide_inserts(seg, start_frame, duration_frames, 1.0)]
+
+
+def _segment_guide_inserts(seg: dict, start_frame: int, duration_frames: int, strength: float) -> list[tuple[int, float]]:
+    try:
+        seg_start = int(seg.get("start", 0))
+        seg_len = max(1, int(seg.get("length", 1)))
+    except (TypeError, ValueError):
+        return [(0, max(0.0, min(1.0, float(strength))))]
+
+    base_strength = max(0.0, min(1.0, float(strength)))
+
+    if seg.get("isEndFrame"):
+        return [(max(0, seg_start + seg_len - 1 - int(start_frame)), base_strength)]
+
+    window_start = int(start_frame)
+    window_end = window_start + max(1, int(duration_frames)) - 1
+    if seg_start > window_end or seg_start + seg_len - 1 < window_start:
+        return []
+    return [(max(0, seg_start - window_start), base_strength)]
+
+
 def _extract_motion_segments_from_timeline(timeline: dict) -> list[dict]:
     out = []
     for seg in timeline.get("segments", []):
@@ -1026,6 +1057,7 @@ def _extract_motion_segments_from_timeline(timeline: dict) -> list[dict]:
             "matteColor": _normalise_hex_color(seg.get("matteColor")) if seg.get("type") == "matte" else "",
             "imageSize": image_size,
             "pointsToSample": int(round(float(seg.get("motionPointsToSample", 121) or 121))),
+            "motionCarryFrames": _segment_motion_carry_frames(seg),
             "tracks": tracks,
         })
     return out
@@ -1086,6 +1118,7 @@ def _clip_motion_segment(
         "resizeMethod": str(method or "maintain aspect ratio"),
         "resizeDivisibleBy": max(1, method_divisible_by),
         "pointsToSample": int(round(float(seg.get("pointsToSample", 121) or 121))),
+        "motionCarryFrames": _segment_motion_carry_frames(seg),
         "tracks": tracks,
     }
 
@@ -1136,7 +1169,8 @@ def _build_motion_tracks_payload(
     except (json.JSONDecodeError, TypeError):
         parsed_segments = []
 
-    for source_seg in [*parsed_segments, *_extract_motion_segments_from_timeline(timeline)]:
+    timeline_motion_segments = _extract_motion_segments_from_timeline(timeline)
+    for source_seg in [*timeline_motion_segments, *parsed_segments]:
         if not isinstance(source_seg, dict):
             continue
         keys = _motion_segment_keys(source_seg)
@@ -1452,14 +1486,11 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
                     derived_h = tensor.shape[1]
                     derived_w = tensor.shape[2]
 
-                if seg.get("isEndFrame"):
-                    insert_frame = max(0, seg_start + int(seg.get("length", 1)) - 1 - start_frame)
-                else:
-                    insert_frame = max(0, seg_start - start_frame)
                 strength = _segment_guide_strength(seg, idx, strengths)
-                guide_data["images"].append(tensor)
-                guide_data["insert_frames"].append(insert_frame)
-                guide_data["strengths"].append(float(strength))
+                for insert_frame, insert_strength in _segment_guide_inserts(seg, start_frame, duration_frames, strength):
+                    guide_data["images"].append(tensor)
+                    guide_data["insert_frames"].append(insert_frame)
+                    guide_data["strengths"].append(float(insert_strength))
 
             # If no images were loaded from the timeline, create a dummy image at strength 0
             # to prevent artifacts in text-to-video mode.

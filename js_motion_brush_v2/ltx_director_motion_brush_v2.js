@@ -10,6 +10,7 @@ const CANVAS_HEIGHT = RULER_HEIGHT + BLOCK_HEIGHT + MOTION_TRACK_HEIGHT + AUDIO_
 const HANDLE_HIT_PX = 14;
 const MIN_SEGMENT_LENGTH = 6;
 const MAX_THUMBNAIL_DIM = 512; // Increased to maintain quality for taller images
+const MOTION_CARRY_MAX_FRAMES = 48;
 
 const HIDDEN_WIDGET_NAMES = ["timeline_data", "motion_tracks_data", "local_prompts", "segment_lengths", "guide_strength", "audio_data", "use_custom_audio", "inpaint_audio", "use_custom_motion", "override_audio"];
 
@@ -106,6 +107,12 @@ function normalizedGuideStrength(seg, fallback = 1.0) {
   const raw = seg?.guideStrength;
   const value = raw === undefined || raw === null || raw === "" ? fallback : Number(raw);
   return clamp01(Number.isFinite(value) ? value : fallback);
+}
+
+function normalizedMotionCarryFrames(seg, fallback = 0) {
+  const raw = seg?.motionCarryFrames;
+  const value = raw === undefined || raw === null || raw === "" ? fallback : Number(raw);
+  return Math.round(clamp(Number.isFinite(value) ? value : fallback, 0, MOTION_CARRY_MAX_FRAMES));
 }
 
 function hasMotionBrushVisualSource(seg) {
@@ -385,6 +392,7 @@ const STYLES = `
     outline: none;
     cursor: pointer;
     border: 1px solid #222;
+    accent-color: #7aa2ff;
   }
   .pr-strength-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
@@ -420,6 +428,64 @@ const STYLES = `
     -moz-appearance: textfield;
   }
   .pr-strength-input:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .pr-carry-motion-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: pointer;
+  }
+  .pr-carry-motion-input {
+    font-size: 12px;
+    color: #fff;
+    background: #222;
+    border: 1px solid #444;
+    border-radius: 4px;
+    width: 42px;
+    text-align: center;
+    padding: 3px;
+    box-sizing: border-box;
+  }
+  .pr-carry-motion-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 70px;
+    height: 4px;
+    background: #444;
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+    border: 1px solid #222;
+    accent-color: #7aa2ff;
+  }
+  .pr-carry-motion-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #aaa;
+    cursor: pointer;
+  }
+  .pr-carry-motion-input:disabled,
+  .pr-carry-motion-slider:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .pr-carry-motion-unit {
+    color: #aaa;
+    font-weight: 500;
+    margin: 0;
+  }
+  .pr-carry-motion-label.is-disabled {
     opacity: 0.35;
     cursor: not-allowed;
   }
@@ -963,6 +1029,11 @@ function parseInitial(jsonStr) {
     }
     if (seg.isEndFrame === undefined) {
       seg.isEndFrame = false;
+    }
+    if (seg.motionCarryFrames === undefined) {
+      seg.motionCarryFrames = 0;
+    } else {
+      seg.motionCarryFrames = normalizedMotionCarryFrames(seg);
     }
     if (seg.type === "matte") {
       seg.matteColor = normalizeMatteColor(seg.matteColor);
@@ -3515,6 +3586,49 @@ class TimelineEditor {
     this.strengthValue.disabled = true;
     this.strengthValue.style.cursor = "ew-resize";
 
+    this.strengthSlider = document.createElement("input");
+    this.strengthSlider.type = "range";
+    this.strengthSlider.className = "pr-strength-slider";
+    this.strengthSlider.min = "0";
+    this.strengthSlider.max = "1";
+    this.strengthSlider.step = "0.01";
+    this.strengthSlider.value = "1";
+    this.strengthSlider.disabled = true;
+    this.strengthSlider.title = "Selected image guide strength";
+
+    this.carryMotionLabel = document.createElement("label");
+    this.carryMotionLabel.className = "pr-carry-motion-label";
+    this.carryMotionLabel.title = "Extend this segment's motion guide into the next image segment";
+
+    this.carryMotionText = document.createElement("span");
+    this.carryMotionText.textContent = "Carry Motion:";
+
+    this.carryMotionValue = document.createElement("input");
+    this.carryMotionValue.type = "text";
+    this.carryMotionValue.className = "pr-carry-motion-input";
+    this.carryMotionValue.value = "0";
+    this.carryMotionValue.disabled = true;
+    this.carryMotionValue.title = "Frames of motion guide to carry past the next image boundary";
+
+    this.carryMotionUnit = document.createElement("span");
+    this.carryMotionUnit.className = "pr-carry-motion-unit";
+    this.carryMotionUnit.textContent = "f";
+
+    this.carryMotionSlider = document.createElement("input");
+    this.carryMotionSlider.type = "range";
+    this.carryMotionSlider.className = "pr-carry-motion-slider";
+    this.carryMotionSlider.min = "0";
+    this.carryMotionSlider.max = String(MOTION_CARRY_MAX_FRAMES);
+    this.carryMotionSlider.step = "1";
+    this.carryMotionSlider.value = "0";
+    this.carryMotionSlider.disabled = true;
+    this.carryMotionSlider.title = "Frames of motion guide to carry past the next image boundary";
+
+    this.carryMotionLabel.appendChild(this.carryMotionText);
+    this.carryMotionLabel.appendChild(this.carryMotionValue);
+    this.carryMotionLabel.appendChild(this.carryMotionUnit);
+    this.carryMotionLabel.appendChild(this.carryMotionSlider);
+
     this.matteColorLabel = document.createElement("span");
     this.matteColorLabel.className = "pr-matte-label";
     this.matteColorLabel.textContent = "Matte:";
@@ -3602,6 +3716,58 @@ class TimelineEditor {
         applyMatteColor(e.target.value);
         this.matteHexInput.blur();
       }
+    });
+
+    const applySelectedGuideStrength = (rawValue) => {
+      let val = parseFloat(rawValue);
+      if (isNaN(val)) val = 1;
+      val = Math.max(0, Math.min(1, val));
+      this.strengthValue.value = val.toFixed(2);
+      if (this.strengthSlider) this.strengthSlider.value = val.toFixed(2);
+
+      if (this.retakeMode) {
+        this.timeline.retakeStrength = val;
+        this.commitChanges();
+      } else if (this.selectionType === "image" && this.timeline.segments[this.selectedIndex]) {
+        const seg = this.timeline.segments[this.selectedIndex];
+        if (seg.type !== "text") {
+          seg.guideStrength = val;
+          this.commitChanges();
+        }
+      }
+    };
+
+    this.strengthSlider.addEventListener("input", (e) => {
+      applySelectedGuideStrength(e.target.value);
+    });
+
+    const applyMotionCarryFrames = (rawValue) => {
+      let val = parseFloat(rawValue);
+      if (isNaN(val)) val = 0;
+      val = Math.round(clamp(val, 0, MOTION_CARRY_MAX_FRAMES));
+      if (this.carryMotionValue) this.carryMotionValue.value = String(val);
+      if (this.carryMotionSlider) this.carryMotionSlider.value = String(val);
+      if (this.selectionType === "image" && this.timeline.segments[this.selectedIndex]) {
+        const seg = this.timeline.segments[this.selectedIndex];
+        if (seg.type === "image" || seg.type === "matte") {
+          seg.motionCarryFrames = val;
+          this.commitChanges();
+        }
+      }
+    };
+
+    this.carryMotionValue.addEventListener("change", (e) => {
+      applyMotionCarryFrames(e.target.value);
+    });
+    this.carryMotionValue.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        applyMotionCarryFrames(e.target.value);
+        this.carryMotionValue.blur();
+      }
+    });
+    this.carryMotionSlider.addEventListener("input", (e) => {
+      applyMotionCarryFrames(e.target.value);
     });
 
     // Dragging logic for video strength
@@ -3724,17 +3890,8 @@ class TimelineEditor {
           if (newVal > 1) newVal = 1;
 
           this.strengthValue.value = newVal.toFixed(2);
-
-          if (this.retakeMode) {
-            this.timeline.retakeStrength = newVal;
-            this.commitChanges();
-          } else if (this.selectionType === "image" && this.timeline.segments[this.selectedIndex]) {
-            const seg = this.timeline.segments[this.selectedIndex];
-            if (seg.type !== "text") {
-              seg.guideStrength = newVal;
-              this.commitChanges();
-            }
-          }
+          if (this.strengthSlider) this.strengthSlider.value = newVal.toFixed(2);
+          applySelectedGuideStrength(newVal);
         }
       };
 
@@ -3754,26 +3911,15 @@ class TimelineEditor {
     });
 
     this.strengthValue.addEventListener("change", (e) => {
-      let val = parseFloat(e.target.value);
-      if (isNaN(val)) val = 1;
-      val = Math.max(0, Math.min(1, val));
-      this.strengthValue.value = val.toFixed(2);
-      if (this.retakeMode) {
-        this.timeline.retakeStrength = val;
-        this.commitChanges();
-      } else if (this.selectionType === "image" && this.timeline.segments[this.selectedIndex]) {
-        const seg = this.timeline.segments[this.selectedIndex];
-        if (seg.type !== "text") {
-          seg.guideStrength = val;
-          this.commitChanges();
-        }
-      }
+      applySelectedGuideStrength(e.target.value);
     });
 
     this.strengthRow.appendChild(this.timeCodeDisplay);
     this.strengthRow.appendChild(this.segmentBoundsDisplay);
     this.strengthRow.appendChild(this.strengthLabel);
     this.strengthRow.appendChild(this.strengthValue);
+    this.strengthRow.appendChild(this.strengthSlider);
+    this.strengthRow.appendChild(this.carryMotionLabel);
     this.strengthRow.appendChild(this.matteColorLabel);
     this.strengthRow.appendChild(this.matteColorInput);
     this.strengthRow.appendChild(this.matteHexInput);
@@ -6361,12 +6507,29 @@ class TimelineEditor {
 
       if (this.strengthRow) this.strengthRow.style.display = "flex";
       if (this.strengthLabel) this.strengthLabel.style.display = "inline";
+      if (this.strengthLabel) this.strengthLabel.textContent = "Guide Strength:";
       if (this.strengthValue) {
         this.strengthValue.style.display = "inline-block";
         this.strengthValue.value = "";
         this.strengthValue.placeholder = "(Multiple)";
         this.strengthValue.disabled = true;
         this.strengthValue.style.opacity = "0.35";
+      }
+      if (this.strengthSlider) {
+        this.strengthSlider.style.display = "none";
+        this.strengthSlider.disabled = true;
+      }
+      if (this.carryMotionLabel) {
+        this.carryMotionLabel.style.display = "none";
+        this.carryMotionLabel.classList.add("is-disabled");
+      }
+      if (this.carryMotionValue) {
+        this.carryMotionValue.value = "0";
+        this.carryMotionValue.disabled = true;
+      }
+      if (this.carryMotionSlider) {
+        this.carryMotionSlider.value = "0";
+        this.carryMotionSlider.disabled = true;
       }
 
       if (this.vidStrLabel) this.vidStrLabel.style.display = "none";
@@ -6431,6 +6594,22 @@ class TimelineEditor {
       this.strengthValue.style.opacity = "";
       this.strengthValue.placeholder = "";
     }
+    if (this.strengthSlider) {
+      this.strengthSlider.style.opacity = "";
+      this.strengthSlider.style.display = "inline-block";
+    }
+    if (this.carryMotionLabel) {
+      this.carryMotionLabel.style.display = "none";
+      this.carryMotionLabel.classList.add("is-disabled");
+    }
+    if (this.carryMotionValue) {
+      this.carryMotionValue.value = "0";
+      this.carryMotionValue.disabled = true;
+    }
+    if (this.carryMotionSlider) {
+      this.carryMotionSlider.value = "0";
+      this.carryMotionSlider.disabled = true;
+    }
     if (this.promptInput) {
       this.promptInput.placeholder = "";
       this.promptInput.style.opacity = "";
@@ -6451,6 +6630,12 @@ class TimelineEditor {
       this.strengthValue.disabled = true;
       this.strengthValue.style.opacity = "0.35";
       this.strengthValue.value = (this.timeline.retakeStrength ?? 1.0).toFixed(2);
+      if (this.strengthSlider) {
+        this.strengthSlider.style.display = "inline-block";
+        this.strengthSlider.disabled = true;
+        this.strengthSlider.value = (this.timeline.retakeStrength ?? 1.0).toFixed(2);
+      }
+      if (this.carryMotionLabel) this.carryMotionLabel.style.display = "none";
 
       this.vidStrLabel.style.display = "none";
       this.vidStrValue.style.display = "none";
@@ -6489,6 +6674,11 @@ class TimelineEditor {
       `;
       this.strengthValue.value = "1.00";
       this.strengthValue.disabled = true;
+      if (this.strengthSlider) {
+        this.strengthSlider.style.display = "none";
+        this.strengthSlider.disabled = true;
+      }
+      if (this.carryMotionLabel) this.carryMotionLabel.style.display = "none";
     } else if (this.selectionType === "motion" && seg) {
       if (this.globalPromptInput) {
         this.globalPromptInput.disabled = true;
@@ -6507,6 +6697,8 @@ class TimelineEditor {
       this.strengthRow.style.display = "flex";
       this.strengthLabel.style.display = "none";
       this.strengthValue.style.display = "none";
+      if (this.strengthSlider) this.strengthSlider.style.display = "none";
+      if (this.carryMotionLabel) this.carryMotionLabel.style.display = "none";
       this.vidStrLabel.style.display = "inline";
       this.vidStrValue.style.display = "inline-block";
       this.vidAttnLabel.style.display = "inline";
@@ -6531,8 +6723,9 @@ class TimelineEditor {
       if (this.promptWrapper) this.promptWrapper.style.display = "block";
       this.strengthRow.style.display = "flex";
       this.strengthLabel.style.display = "inline";
-      this.strengthLabel.textContent = "Guide Strength:";
+      this.strengthLabel.textContent = "Image Strength:";
       this.strengthValue.style.display = "inline-block";
+      if (this.strengthSlider) this.strengthSlider.style.display = "inline-block";
       this.vidStrLabel.style.display = "none";
       this.vidStrValue.style.display = "none";
       this.vidAttnLabel.style.display = "none";
@@ -6554,6 +6747,25 @@ class TimelineEditor {
         this.strengthValue.value = strength.toFixed(2);
         this.strengthValue.disabled = !isImage;
         this.strengthValue.style.opacity = isImage ? "1.0" : "0.35";
+        if (this.strengthSlider) {
+          this.strengthSlider.value = strength.toFixed(2);
+          this.strengthSlider.disabled = !isImage;
+          this.strengthSlider.style.opacity = isImage ? "1.0" : "0.35";
+        }
+        const canCarryMotion = this.selectionType === "image" && (seg.type === "image" || seg.type === "matte");
+        const carryFrames = normalizedMotionCarryFrames(seg);
+        if (this.carryMotionLabel) {
+          this.carryMotionLabel.style.display = canCarryMotion ? "inline-flex" : "none";
+          this.carryMotionLabel.classList.toggle("is-disabled", !canCarryMotion);
+        }
+        if (this.carryMotionValue) {
+          this.carryMotionValue.value = String(carryFrames);
+          this.carryMotionValue.disabled = !canCarryMotion;
+        }
+        if (this.carryMotionSlider) {
+          this.carryMotionSlider.value = String(carryFrames);
+          this.carryMotionSlider.disabled = !canCarryMotion;
+        }
       } else {
         this.promptInput.value = "";
         this.promptInput.placeholder = "No segment selected!";
@@ -6562,6 +6774,12 @@ class TimelineEditor {
         this.strengthValue.value = "1.00";
         this.strengthValue.disabled = true;
         this.strengthValue.style.opacity = "0.35";
+        if (this.strengthSlider) {
+          this.strengthSlider.value = "1.00";
+          this.strengthSlider.disabled = true;
+          this.strengthSlider.style.opacity = "0.35";
+        }
+        if (this.carryMotionLabel) this.carryMotionLabel.style.display = "none";
       }
     }
 
@@ -9950,9 +10168,14 @@ class TimelineEditor {
       normalStartFrame: this.timeline.normalStartFrame,
       normalDurationFrames: this.timeline.normalDurationFrames,
       segments: sortedSegments.map(s => {
-        const { imgObj, videoEl, _isSeeking, thumbnails, _extractingThumbs, _sSecs, _lSecs, _tSecs, _dSecs, _uploading, _blobUrl, ...rest } = s;
+        const { imgObj, videoEl, _isSeeking, thumbnails, _extractingThumbs, _sSecs, _lSecs, _tSecs, _dSecs, _uploading, _blobUrl, holdImage, ...rest } = s;
         if (isTimelineGuideSegment(rest)) {
           rest.guideStrength = normalizedGuideStrength(rest, rest.type === "matte" ? 0.0 : 1.0);
+        }
+        if (isMotionBrushEligibleSegment(rest)) {
+          rest.motionCarryFrames = normalizedMotionCarryFrames(rest);
+        } else {
+          delete rest.motionCarryFrames;
         }
         if (rest.type === "matte") {
           rest.matteColor = normalizeMatteColor(rest.matteColor);

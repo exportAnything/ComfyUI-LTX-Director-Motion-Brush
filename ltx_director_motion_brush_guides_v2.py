@@ -1,12 +1,18 @@
 import json
 import math
+from fractions import Fraction
 
 import node_helpers
 import torch
-from comfy_api.latest import io
+from comfy_api.latest import InputImpl, Types, io
+
+from .ltx_director_motion_brush_v2 import GuideData, _resize_image
+from .ltx_director_guide import _load_motion_video_frames
 
 
 _SYNTHETIC_DIRECTOR_ATTENTION_STRENGTH = 0.35
+_MOTION_BOUNDARY_GUARD_FRAMES = 16
+_MOTION_CARRY_MAX_FRAMES = 48
 
 
 def _clamp01(value) -> float:
@@ -14,6 +20,13 @@ def _clamp01(value) -> float:
         return max(0.0, min(1.0, float(value)))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _motion_segment_carry_frames(seg: dict) -> int:
+    try:
+        return max(0, min(_MOTION_CARRY_MAX_FRAMES, int(round(float(seg.get("motionCarryFrames", 0) or 0)))))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _normalise_point(point: dict, image_size: dict | None) -> dict[str, float]:
@@ -176,6 +189,45 @@ def _parse_motion_payload(raw: str, fallback_duration: int) -> dict:
     return payload
 
 
+def _motion_segment_frame_counts(
+    seg: dict,
+    next_start: int | None,
+    total_frames: int,
+    boundary_guard_frames: int = _MOTION_BOUNDARY_GUARD_FRAMES,
+) -> tuple[int, int]:
+    start = int(round(float(seg.get("start", 0) or 0)))
+    length = int(round(float(seg.get("length", 0) or 0)))
+    if start >= total_frames or length < 0:
+        return 0, 0
+
+    seg_start = max(0, start)
+    segment_end = max(seg_start, start + length)
+    max_frames = max(0, total_frames - seg_start)
+    if max_frames <= 0:
+        return 0, 0
+
+    sample_frames = max(1, length)
+    render_frames = sample_frames
+
+    if next_start is not None and int(next_start) <= segment_end:
+        effective_guard = int(boundary_guard_frames or 0) - _motion_segment_carry_frames(seg)
+        target_end = max(seg_start + 1, int(next_start) - effective_guard)
+        render_frames = max(1, target_end - seg_start)
+        sample_frames = max(sample_frames, render_frames)
+    elif segment_end < total_frames:
+        sample_frames += 1
+        render_frames = sample_frames
+
+    sample_frames = min(sample_frames, max_frames)
+    render_frames = max(1, min(render_frames, sample_frames))
+    return sample_frames, render_frames
+
+
+def _motion_segment_local_frame_count(seg: dict, next_start: int | None, total_frames: int) -> int:
+    _, render_frames = _motion_segment_frame_counts(seg, next_start, total_frames)
+    return render_frames
+
+
 def _age_color(ratio: float, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
     ratio = max(0.0, min(1.0, float(ratio)))
     if ratio <= 1 / 3:
@@ -303,15 +355,25 @@ class LTXDirectorMotionBrushV2Guide(io.ComfyNode):
         segments_rendered = 0
         tracks_rendered = 0
 
-        for seg in sorted(payload.get("segments", []), key=lambda s: int(float(s.get("start", 0) or 0))):
+        sorted_segments = sorted(payload.get("segments", []), key=lambda s: int(float(s.get("start", 0) or 0)))
+        for seg_idx, seg in enumerate(sorted_segments):
             if not isinstance(seg, dict):
                 continue
             start = int(round(float(seg.get("start", 0) or 0)))
-            length = int(round(float(seg.get("length", 0) or 0)))
-            if start >= total_frames or length < 0:
-                continue
-            local_frames = min(max(1, length + 1), total_frames - max(0, start))
-            if local_frames <= 0:
+            next_start = None
+            for next_seg in sorted_segments[seg_idx + 1 :]:
+                if not isinstance(next_seg, dict):
+                    continue
+                try:
+                    candidate = int(round(float(next_seg.get("start", 0) or 0)))
+                except (TypeError, ValueError):
+                    continue
+                if candidate > start:
+                    next_start = candidate
+                    break
+
+            sample_frames, render_frames = _motion_segment_frame_counts(seg, next_start, total_frames)
+            if sample_frames <= 0 or render_frames <= 0:
                 continue
 
             raw_tracks = seg.get("tracks", [])
@@ -345,7 +407,7 @@ class LTXDirectorMotionBrushV2Guide(io.ComfyNode):
                     )
                 if not points:
                     continue
-                sampled_tracks.append(_interpolate(points, local_frames))
+                sampled_tracks.append(_interpolate(points, sample_frames))
 
             if not sampled_tracks:
                 continue
@@ -353,7 +415,7 @@ class LTXDirectorMotionBrushV2Guide(io.ComfyNode):
             segments_rendered += 1
             tracks_rendered += len(sampled_tracks)
             seg_start = max(0, start)
-            for local_idx in range(local_frames):
+            for local_idx in range(render_frames):
                 frame_idx = seg_start + local_idx
                 if frame_idx >= total_frames:
                     break
@@ -388,6 +450,214 @@ class LTXDirectorMotionBrushV2Guide(io.ComfyNode):
             }
         )
         return io.NodeOutput(out, 0, summary)
+
+
+def _latent_output_shape(optional_latent, width: int, height: int, duration_frames: int) -> tuple[int, int, int]:
+    latent_frames = 0
+    if optional_latent is not None and isinstance(optional_latent, dict):
+        samples = optional_latent.get("samples")
+        if isinstance(samples, torch.Tensor) and samples.ndim == 5:
+            latent_frames = int(samples.shape[2])
+            if width <= 0:
+                width = int(samples.shape[4]) * 32
+            if height <= 0:
+                height = int(samples.shape[3]) * 32
+
+    if duration_frames <= 0 and latent_frames > 0:
+        duration_frames = max(0, (latent_frames - 1) * 8)
+
+    return max(0, int(duration_frames)), int(width), int(height)
+
+
+def _video_from_frames(frames: torch.Tensor, frame_rate: float):
+    fps = max(0.001, float(frame_rate or 24.0))
+    return InputImpl.VideoFromComponents(
+        Types.VideoComponents(
+            images=frames,
+            audio=None,
+            frame_rate=Fraction(round(fps * 1000), 1000),
+        )
+    )
+
+
+def _blank_retake_source_preview(
+    width: int,
+    height: int,
+    total_frames: int,
+    status: str,
+    reason: str,
+    start_frame: int,
+    frame_rate: float,
+) -> io.NodeOutput:
+    width = width if width > 0 else 768
+    height = height if height > 0 else 512
+    total_frames = max(1, int(total_frames))
+    out = torch.zeros(total_frames, int(height), int(width), 3, dtype=torch.float32)
+    summary = json.dumps(
+        {
+            "version": 1,
+            "status": status,
+            "reason": reason,
+            "source": "",
+            "start_frame": int(start_frame),
+            "frame_rate": float(frame_rate),
+            "width": int(width),
+            "height": int(height),
+            "frames": int(total_frames),
+        }
+    )
+    return io.NodeOutput(out, _video_from_frames(out, frame_rate), 0, summary)
+
+
+class LTXDirectorMotionBrushV2RetakeSourcePreview(io.ComfyNode):
+    """Decode the Retake Mode source video as an image batch for split-view comparison."""
+
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="LTXDirectorMotionBrushV2RetakeSourcePreview",
+            display_name="LTX Director Motion Brush V2 Retake Source Preview",
+            category="WhatDreamsCost",
+            description=(
+                "Reads the Retake Mode video stored in LTX Director Motion Brush V2 guide_data "
+                "and emits the same source range as an IMAGE batch for comparison nodes."
+            ),
+            inputs=[
+                GuideData.Input(
+                    "guide_data",
+                    tooltip="Connect guide_data from LTX Director Motion Brush V2.",
+                ),
+                io.Latent.Input(
+                    "optional_latent",
+                    optional=True,
+                    tooltip="Optional Director video latent. When connected, width, height, and frame count are inferred.",
+                ),
+                io.Int.Input("width", default=0, min=0, max=8192, step=8),
+                io.Int.Input("height", default=0, min=0, max=8192, step=8),
+                io.Int.Input(
+                    "duration_frames",
+                    default=0,
+                    min=0,
+                    max=10000,
+                    step=1,
+                    tooltip="0 uses guide_data duration or optional_latent length.",
+                ),
+                io.Combo.Input(
+                    "resize_method",
+                    options=["match director guide", "stretch to fit", "pad", "pad green", "crop"],
+                    default="match director guide",
+                    tooltip="How to resize the source video for comparison. The default mirrors the Director retake guide path.",
+                ),
+                io.Combo.Input(
+                    "resample_mode",
+                    options=["nearest", "linear"],
+                    default="nearest",
+                    tooltip="Frame resampling used when the source video FPS differs from the Director timeline FPS.",
+                ),
+                io.Combo.Input(
+                    "on_missing",
+                    options=["blank frame", "error"],
+                    default="blank frame",
+                    tooltip="Whether to return a black placeholder or raise an error when no Retake Mode source is available.",
+                ),
+            ],
+            outputs=[
+                io.Image.Output("image", display_name="retake_source"),
+                io.Video.Output("video", display_name="retake_source_video"),
+                io.Int.Output("frame_idx", display_name="frame_idx"),
+                io.String.Output("render_summary"),
+            ],
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        guide_data: dict,
+        width: int,
+        height: int,
+        duration_frames: int,
+        resize_method: str,
+        resample_mode: str,
+        on_missing: str,
+        optional_latent=None,
+    ) -> io.NodeOutput:
+        guide_data = guide_data if isinstance(guide_data, dict) else {}
+        try:
+            timeline = json.loads(guide_data.get("timeline_data", "{}") or "{}")
+        except Exception:
+            timeline = {}
+
+        frame_rate = float(guide_data.get("frame_rate", 24) or 24)
+        start_frame = int(guide_data.get("start_frame", 0) or 0)
+        guide_duration = int(guide_data.get("duration_frames", 0) or 0)
+        if duration_frames <= 0:
+            duration_frames = guide_duration
+        duration_frames, width, height = _latent_output_shape(optional_latent, width, height, duration_frames)
+        total_frames = max(1, int(duration_frames) + 1)
+
+        retake_video = timeline.get("retakeVideo") if isinstance(timeline, dict) else None
+        video_file = retake_video.get("imageFile", "") if isinstance(retake_video, dict) else ""
+        missing_reason = ""
+        if not timeline.get("retakeMode", False):
+            missing_reason = "Retake Mode is not active in guide_data."
+        elif retake_video and not video_file:
+            missing_reason = "Retake Mode source video is still uploading or has no saved file path."
+        elif not video_file:
+            missing_reason = "No Retake Mode source video is saved in guide_data."
+
+        if missing_reason:
+            if on_missing == "error":
+                raise ValueError(missing_reason)
+            return _blank_retake_source_preview(
+                width,
+                height,
+                total_frames,
+                "missing",
+                missing_reason,
+                start_frame,
+                frame_rate,
+            )
+
+        frames = _load_motion_video_frames(
+            video_file,
+            trim_start_frames=start_frame,
+            length_frames=total_frames,
+            director_fps=frame_rate,
+            resample_mode=resample_mode,
+        )
+
+        source_height = int(frames.shape[1])
+        source_width = int(frames.shape[2])
+        target_width = width if width > 0 else source_width
+        target_height = height if height > 0 else source_height
+        effective_resize = resize_method
+        if effective_resize == "match director guide":
+            effective_resize = guide_data.get("resize_method", "maintain aspect ratio") or "maintain aspect ratio"
+        if effective_resize == "maintain aspect ratio":
+            effective_resize = "pad"
+
+        pixels = _resize_image(
+            frames[:, :, :, :3],
+            int(target_width),
+            int(target_height),
+            effective_resize,
+            divisible_by=1,
+        )
+
+        summary = json.dumps(
+            {
+                "version": 1,
+                "status": "ok",
+                "source": video_file,
+                "start_frame": int(start_frame),
+                "frame_rate": float(frame_rate),
+                "resize_method": effective_resize,
+                "width": int(pixels.shape[2]),
+                "height": int(pixels.shape[1]),
+                "frames": int(pixels.shape[0]),
+            }
+        )
+        return io.NodeOutput(pixels, _video_from_frames(pixels, frame_rate), 0, summary)
 
 
 def _conditioning_get_value(conditioning, key, default=None):
@@ -614,12 +884,14 @@ class LTXDirectorMotionBrushV2SafeDownscaleFactor(io.ComfyNode):
 
 NODE_CLASS_MAPPINGS = {
     "LTXDirectorMotionBrushV2Guide": LTXDirectorMotionBrushV2Guide,
+    "LTXDirectorMotionBrushV2RetakeSourcePreview": LTXDirectorMotionBrushV2RetakeSourcePreview,
     "LTXDirectorMotionBrushV2GuideAttention": LTXDirectorMotionBrushV2GuideAttention,
     "LTXDirectorMotionBrushV2SafeDownscaleFactor": LTXDirectorMotionBrushV2SafeDownscaleFactor,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "LTXDirectorMotionBrushV2Guide": "LTX Director Motion Brush V2 Guide",
+    "LTXDirectorMotionBrushV2RetakeSourcePreview": "LTX Director Motion Brush V2 Retake Source Preview",
     "LTXDirectorMotionBrushV2GuideAttention": "LTX Director Motion Brush V2 Guide Attention",
     "LTXDirectorMotionBrushV2SafeDownscaleFactor": "LTX Director Motion Brush V2 Safe Downscale Factor",
 }

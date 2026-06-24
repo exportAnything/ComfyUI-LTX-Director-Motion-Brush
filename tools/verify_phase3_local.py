@@ -20,6 +20,7 @@ APP_ROOT = CUSTOM_NODES.parent
 EXPECTED_NODES = {
     "LTXDirectorMotionBrushV2",
     "LTXDirectorMotionBrushV2Guide",
+    "LTXDirectorMotionBrushV2RetakeSourcePreview",
     "LTXDirectorMotionBrushV2GuideAttention",
     "LTXDirectorMotionBrushV2SafeDownscaleFactor",
     "LTXDirectorMotionBrushV2DirectorGuide",
@@ -36,6 +37,7 @@ ROUTE_MARKERS = [
 FRONTEND_MARKERS = [
     "Motion Brush supports image and matte clips only",
     "Retake Mode (BETA)",
+    "Carry Motion",
     "selectedSegmentIds",
     "ltx-director-motion-brush-v2-styles",
 ]
