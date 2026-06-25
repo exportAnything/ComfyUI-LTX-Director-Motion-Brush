@@ -94,16 +94,52 @@ The template is sanitized for release:
 
 ## Sample Outputs
 
-These are generated examples from the included workflow and related Motion Brush settings. They are committed under `Samples/` so users can see the intended behavior before installing.
+These are generated examples from the included workflow and related Motion Brush settings. Click any preview to open the full MP4. GitHub may not preview MP4 blob pages directly, so lightweight GIF previews are included for the README.
 
-| Sample | What it demonstrates | Runtime |
-| --- | --- | --- |
-| [MOTION_BRUSH.mp4](Samples/MOTION_BRUSH.mp4) | Core image timeline plus Motion Brush track guidance. | 15.04s |
-| [MOTION_BRUSH_DISTILLED_MODEL.mp4](Samples/MOTION_BRUSH_DISTILLED_MODEL.mp4) | Motion Brush behavior with the distilled model setup. | 15.04s |
-| [MOTION_CARRY_16_Frames.mp4](Samples/MOTION_CARRY_16_Frames.mp4) | Intentional motion carry into the next image over 16 frames. | 15.04s |
-| [MOTION_CARRY_32_Frames.mp4](Samples/MOTION_CARRY_32_Frames.mp4) | Stronger motion carry over 32 frames for more aggressive transitions. | 15.04s |
-| [RETAKE_8_Steps.mp4](Samples/RETAKE_8_Steps.mp4) | Retake Mode using a short sampling setup. | 10.08s |
-| [RETAKE_DISTILLED_MODEL.mp4](Samples/RETAKE_DISTILLED_MODEL.mp4) | Retake Mode behavior with the distilled model setup. | 10.08s |
+<table>
+  <tr>
+    <td width="50%">
+      <a href="Samples/MOTION_BRUSH.mp4"><img src="Samples/previews/MOTION_BRUSH.gif" width="100%" alt="Motion Brush sample preview"></a>
+      <br>
+      <strong>Motion Brush</strong><br>
+      Core image timeline plus Motion Brush track guidance. Full video: <a href="Samples/MOTION_BRUSH.mp4">MOTION_BRUSH.mp4</a>.
+    </td>
+    <td width="50%">
+      <a href="Samples/MOTION_BRUSH_DISTILLED_MODEL.mp4"><img src="Samples/previews/MOTION_BRUSH_DISTILLED_MODEL.gif" width="100%" alt="Motion Brush distilled sample preview"></a>
+      <br>
+      <strong>Motion Brush Distilled</strong><br>
+      Motion Brush behavior with the distilled model setup. Full video: <a href="Samples/MOTION_BRUSH_DISTILLED_MODEL.mp4">MOTION_BRUSH_DISTILLED_MODEL.mp4</a>.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <a href="Samples/MOTION_CARRY_16_Frames.mp4"><img src="Samples/previews/MOTION_CARRY_16_Frames.gif" width="100%" alt="Motion Carry 16 frames sample preview"></a>
+      <br>
+      <strong>Motion Carry 16 Frames</strong><br>
+      Intentional motion carry into the next image over 16 frames. Full video: <a href="Samples/MOTION_CARRY_16_Frames.mp4">MOTION_CARRY_16_Frames.mp4</a>.
+    </td>
+    <td width="50%">
+      <a href="Samples/MOTION_CARRY_32_Frames.mp4"><img src="Samples/previews/MOTION_CARRY_32_Frames.gif" width="100%" alt="Motion Carry 32 frames sample preview"></a>
+      <br>
+      <strong>Motion Carry 32 Frames</strong><br>
+      Stronger motion carry over 32 frames for more aggressive transitions. Full video: <a href="Samples/MOTION_CARRY_32_Frames.mp4">MOTION_CARRY_32_Frames.mp4</a>.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <a href="Samples/RETAKE_8_Steps.mp4"><img src="Samples/previews/RETAKE_8_Steps.gif" width="100%" alt="Retake 8 steps sample preview"></a>
+      <br>
+      <strong>Retake 8 Steps</strong><br>
+      Retake Mode using a short sampling setup. Full video: <a href="Samples/RETAKE_8_Steps.mp4">RETAKE_8_Steps.mp4</a>.
+    </td>
+    <td width="50%">
+      <a href="Samples/RETAKE_DISTILLED_MODEL.mp4"><img src="Samples/previews/RETAKE_DISTILLED_MODEL.gif" width="100%" alt="Retake distilled sample preview"></a>
+      <br>
+      <strong>Retake Distilled</strong><br>
+      Retake Mode behavior with the distilled model setup. Full video: <a href="Samples/RETAKE_DISTILLED_MODEL.mp4">RETAKE_DISTILLED_MODEL.mp4</a>.
+    </td>
+  </tr>
+</table>
 
 ## Motion Brush Notes
 
