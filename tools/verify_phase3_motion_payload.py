@@ -181,6 +181,31 @@ def main() -> None:
     brush_on_payload = build_payload({**mixed_timeline, "motionBrushMode": True}, stale_motion)
     assert_equal([seg["id"] for seg in brush_on_payload["segments"]], ["img1", "legacy", "matte1"], "motion brush mode on preserves payload")
 
+    untracked_next_timeline = {
+        "retakeMode": False,
+        "segments": [
+            {
+                "id": "tracked",
+                "type": "image",
+                "start": 0,
+                "length": 60,
+                "imageFile": "whatdreamscost/tracked.png",
+                "motionTracks": image_track,
+                "motionCarryFrames": 0,
+            },
+            {
+                "id": "untracked",
+                "type": "image",
+                "start": 60,
+                "length": 60,
+                "imageFile": "whatdreamscost/untracked.png",
+            },
+        ],
+    }
+    untracked_next_payload = build_payload(untracked_next_timeline, start=0, duration=120)
+    assert_equal([seg["id"] for seg in untracked_next_payload["segments"]], ["tracked"], "untracked next image is not emitted as a motion segment")
+    assert_equal(untracked_next_payload["segments"][0]["nextStart"], 60, "tracked segment records untracked next image boundary")
+
     matte_only = {
         "retakeMode": False,
         "segments": [
@@ -338,11 +363,13 @@ def main() -> None:
     finally:
         motion_guides._load_motion_video_frames = original_loader
 
-    preview_frames, preview_video, _, preview_summary_raw = retake_preview.result
+    preview_frames, preview_video, _, preview_summary_raw, preview_any_video = retake_preview.result
     assert_equal(list(preview_frames.shape), [8, 2, 4, 3], "retake source preview shape")
     assert_close(float(preview_frames.mean()), 0.25, "retake source preview pixels")
     preview_components = preview_video.get_components()
+    preview_any_components = preview_any_video.get_components()
     assert_equal(list(preview_components.images.shape), [8, 2, 4, 3], "retake source preview video shape")
+    assert_equal(list(preview_any_components.images.shape), [8, 2, 4, 3], "retake source preview wildcard video shape")
     assert_close(float(preview_components.frame_rate), 24.0, "retake source preview video fps")
     assert_equal(
         captured_source_preview,
@@ -368,9 +395,10 @@ def main() -> None:
         resample_mode="nearest",
         on_missing="blank frame",
     )
-    missing_frames, missing_video, _, missing_summary_raw = missing_preview.result
+    missing_frames, missing_video, _, missing_summary_raw, missing_any_video = missing_preview.result
     assert_equal(list(missing_frames.shape), [3, 2, 4, 3], "missing retake source placeholder shape")
     assert_equal(list(missing_video.get_components().images.shape), [3, 2, 4, 3], "missing retake source placeholder video shape")
+    assert_equal(list(missing_any_video.get_components().images.shape), [3, 2, 4, 3], "missing retake source placeholder wildcard video shape")
     assert_equal(json.loads(missing_summary_raw)["status"], "missing", "missing retake source placeholder status")
 
     matte = motion_brush._load_image_tensor({"type": "matte", "matteColor": "#0f0"}, 64, 32)
@@ -475,11 +503,67 @@ def main() -> None:
         max_radius=1,
     )
     boundary_frames = boundary_out.result[0]
+    boundary_video = boundary_out.result[3]
+    boundary_any_video = boundary_out.result[4]
+    assert_equal(
+        list(boundary_video.get_components().images.shape),
+        [241, 16, 32, 3],
+        "motion guide video output shape",
+    )
+    assert_equal(
+        list(boundary_any_video.get_components().images.shape),
+        [241, 16, 32, 3],
+        "motion guide wildcard video output shape",
+    )
     assert_close(float(boundary_frames[103, :3, :3, :].sum()), 3.0, "first motion guide segment reaches its last rendered frame")
     assert_close(float(boundary_frames[104, :3, :3, :].sum()), 0.0, "first motion guide segment leaves a blank guard band")
     assert_close(float(boundary_frames[120, :3, :3, :].sum()), 0.0, "first motion guide segment does not bleed into next segment")
     if float(boundary_frames[120, -3:, -3:, :].sum()) <= 0.0:
         raise AssertionError("second motion guide segment should begin on its first frame")
+    untracked_boundary_payload = json.dumps(
+        {
+            "version": 1,
+            "duration_frames": 240,
+            "segments": [
+                {"id": "a", "start": 0, "length": 120, "nextStart": 120, "tracks": [[{"x": 0.0, "y": 0.0}]]},
+            ],
+        }
+    )
+    untracked_boundary_out = motion_guides.LTXDirectorMotionBrushV2Guide.execute(
+        untracked_boundary_payload,
+        width=32,
+        height=16,
+        duration_frames=240,
+        trail_frames=0,
+        min_radius=1,
+        max_radius=1,
+    )
+    untracked_boundary_frames = untracked_boundary_out.result[0]
+    assert_close(float(untracked_boundary_frames[103, :3, :3, :].sum()), 3.0, "tracked segment reaches guard edge before an untracked image")
+    assert_close(float(untracked_boundary_frames[104, :3, :3, :].sum()), 0.0, "carry 0 leaves a blank guard before an untracked image")
+    assert_close(float(untracked_boundary_frames[120, :3, :3, :].sum()), 0.0, "carry 0 does not bleed into an untracked next image")
+    untracked_carry_payload = json.dumps(
+        {
+            "version": 1,
+            "duration_frames": 240,
+            "segments": [
+                {"id": "a", "start": 0, "length": 120, "nextStart": 120, "motionCarryFrames": 24, "tracks": [[{"x": 0.0, "y": 0.0}]]},
+            ],
+        }
+    )
+    untracked_carry_out = motion_guides.LTXDirectorMotionBrushV2Guide.execute(
+        untracked_carry_payload,
+        width=32,
+        height=16,
+        duration_frames=240,
+        trail_frames=0,
+        min_radius=1,
+        max_radius=1,
+    )
+    untracked_carry_frames = untracked_carry_out.result[0]
+    if float(untracked_carry_frames[127, :3, :3, :].sum()) <= 0.0:
+        raise AssertionError("carry motion should intentionally render into an untracked next image")
+    assert_close(float(untracked_carry_frames[128, :3, :3, :].sum()), 0.0, "untracked carry motion clamps to the configured carry window")
     carry_payload = json.dumps(
         {
             "version": 1,

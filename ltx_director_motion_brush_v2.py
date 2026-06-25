@@ -1040,6 +1040,19 @@ def _segment_guide_inserts(seg: dict, start_frame: int, duration_frames: int, st
 
 def _extract_motion_segments_from_timeline(timeline: dict) -> list[dict]:
     out = []
+    visual_starts = []
+    for seg in timeline.get("segments", []):
+        if not isinstance(seg, dict):
+            continue
+        try:
+            seg_start = int(round(float(seg.get("start", 0) or 0)))
+            seg_len = int(round(float(seg.get("length", 0) or 0)))
+        except (TypeError, ValueError):
+            continue
+        if seg_len > 0:
+            visual_starts.append(seg_start)
+    visual_starts = sorted(set(visual_starts))
+
     for seg in timeline.get("segments", []):
         if not _is_motion_brush_segment(seg):
             continue
@@ -1047,10 +1060,12 @@ def _extract_motion_segments_from_timeline(timeline: dict) -> list[dict]:
         tracks = _normalise_motion_tracks(seg.get("motionTracks") or seg.get("motion_tracks") or [], image_size)
         if not tracks:
             continue
+        seg_start = int(round(float(seg.get("start", 0) or 0)))
+        next_start = next((start for start in visual_starts if start > seg_start), None)
         out.append({
             "id": seg.get("id", ""),
             "type": seg.get("type", "image"),
-            "start": int(round(float(seg.get("start", 0) or 0))),
+            "start": seg_start,
             "length": int(round(float(seg.get("length", 0) or 0))),
             "prompt": seg.get("prompt", ""),
             "imageFile": seg.get("imageFile", "") or seg.get("videoFile", ""),
@@ -1058,6 +1073,7 @@ def _extract_motion_segments_from_timeline(timeline: dict) -> list[dict]:
             "imageSize": image_size,
             "pointsToSample": int(round(float(seg.get("motionPointsToSample", 121) or 121))),
             "motionCarryFrames": _segment_motion_carry_frames(seg),
+            "nextStart": next_start,
             "tracks": tracks,
         })
     return out
@@ -1106,7 +1122,7 @@ def _clip_motion_segment(
         method_divisible_by = int(round(float(resize_divisible_by or seg.get("resizeDivisibleBy") or seg.get("resize_divisible_by") or 32)))
     except (TypeError, ValueError):
         method_divisible_by = int(resize_divisible_by or 32)
-    return {
+    out = {
         "id": seg.get("id", ""),
         "type": seg_type,
         "start": int(new_start),
@@ -1121,6 +1137,15 @@ def _clip_motion_segment(
         "motionCarryFrames": _segment_motion_carry_frames(seg),
         "tracks": tracks,
     }
+    try:
+        next_start = int(round(float(seg.get("nextStart", seg.get("next_start")))))
+    except (TypeError, ValueError):
+        next_start = None
+    if next_start is not None:
+        clipped_next_start = int(next_start) - int(start_frame)
+        if clipped_next_start > int(new_start):
+            out["nextStart"] = clipped_next_start
+    return out
 
 
 def _build_motion_tracks_payload(

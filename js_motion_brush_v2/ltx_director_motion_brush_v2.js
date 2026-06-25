@@ -9,6 +9,7 @@ const MOTION_TRACK_HEIGHT = 80; // used as Motion Guide track height
 const CANVAS_HEIGHT = RULER_HEIGHT + BLOCK_HEIGHT + MOTION_TRACK_HEIGHT + AUDIO_TRACK_HEIGHT;
 const HANDLE_HIT_PX = 14;
 const MIN_SEGMENT_LENGTH = 6;
+const MIN_RETAKE_SECONDS = 6;
 const MAX_THUMBNAIL_DIM = 512; // Increased to maintain quality for taller images
 const MOTION_CARRY_MAX_FRAMES = 48;
 
@@ -1610,6 +1611,29 @@ class TimelineEditor {
     return parseInt((this.frameRateWidget && this.frameRateWidget.value > 0) ? this.frameRateWidget.value : 24, 10);
   }
 
+  getMinRetakeFrames(baseVideoFrames = null) {
+    const minFrames = Math.max(MIN_SEGMENT_LENGTH, Math.round(MIN_RETAKE_SECONDS * this.getFrameRate()));
+    const maxFrames = Number.isFinite(baseVideoFrames) && baseVideoFrames > 0 ? Math.floor(baseVideoFrames) : null;
+    return maxFrames ? Math.max(1, Math.min(minFrames, maxFrames)) : minFrames;
+  }
+
+  clampRetakeRegion(baseVideoFrames = null) {
+    const fallbackFrames = this.getDurationFrames();
+    const rawBaseFrames = baseVideoFrames ?? this.timeline.retakeVideo?.videoDurationFrames ?? fallbackFrames;
+    const maxFrames = Math.max(1, Math.round(Number(rawBaseFrames) || fallbackFrames || 1));
+    const minFrames = this.getMinRetakeFrames(maxFrames);
+
+    let start = Math.round(Number(this.timeline.retakeStart ?? 0) || 0);
+    let length = Math.round(Number(this.timeline.retakeLength ?? maxFrames) || maxFrames);
+
+    length = clamp(length, minFrames, maxFrames);
+    start = clamp(start, 0, Math.max(0, maxFrames - length));
+
+    this.timeline.retakeStart = start;
+    this.timeline.retakeLength = length;
+    return { start, length, minFrames, maxFrames };
+  }
+
   // Grow the timeline duration to fit `requiredFrames` if it is currently shorter.
   // The timeline only ever grows — never shrinks — through this method.
   growTimelineIfNeeded(requiredFrames) {
@@ -2990,6 +3014,7 @@ class TimelineEditor {
         if (this.timeline.retakeVideo && this.timeline.retakeVideo.videoDurationFrames) {
           this.syncWidgetsToRetakeDuration(this.timeline.retakeVideo.videoDurationFrames);
         }
+        this.clampRetakeRegion();
       } else {
         // Restore normal mode backup
         this._suppressCommit = true;
@@ -5252,8 +5277,9 @@ class TimelineEditor {
             _uploading: true
           };
 
-          // Initialize retake region to the middle 50% of the clip (25%–75%)
-          const retakeLen = Math.max(1, Math.round(clipFrames * 0.5));
+          // Initialize retake region to the middle 50% of the clip (25%–75%),
+          // but keep the region long enough for LTX Retake Mode to behave reliably.
+          const retakeLen = Math.min(clipFrames, Math.max(this.getMinRetakeFrames(clipFrames), Math.round(clipFrames * 0.5)));
           const retakeStartFrame = Math.round((clipFrames - retakeLen) / 2);
           this.timeline.retakeStart = retakeStartFrame;
           this.timeline.retakeLength = retakeLen;
@@ -8539,8 +8565,11 @@ class TimelineEditor {
       if (y >= RULER_HEIGHT && y <= RULER_HEIGHT + this.blockHeight) {
         const logicalWidth = this.canvas.offsetWidth;
         const totalFrames = this.getVisualDurationFrames();
-        const retakeStart = this.timeline.retakeStart ?? 0;
         const baseVideoDur = this.timeline.retakeVideo?.videoDurationFrames ?? totalFrames;
+        if (this.timeline.retakeVideo) {
+          this.clampRetakeRegion(baseVideoDur);
+        }
+        const retakeStart = this.timeline.retakeStart ?? 0;
         const retakeLength = this.timeline.retakeLength ?? baseVideoDur;
 
         const x1 = (retakeStart / totalFrames) * logicalWidth;
@@ -8857,11 +8886,12 @@ class TimelineEditor {
       if (this._dragType === "retake_left") {
         this.canvas.style.cursor = "ew-resize";
         let newStart = this._dragStartRetakeStart + deltaFrames;
-        let newLength = this._dragStartRetakeLength - deltaFrames;
+        const baseVideoDur = this.timeline.retakeVideo?.videoDurationFrames ?? totalFrames;
+        const minRetakeFrames = this.getMinRetakeFrames(baseVideoDur);
+        const fixedEnd = clamp(this._dragStartRetakeStart + this._dragStartRetakeLength, minRetakeFrames, baseVideoDur);
 
         if (this.isSnapping) {
           const thresholdFrames = (15 / logicalWidth) * totalFrames;
-          const baseVideoDur = this.timeline.retakeVideo?.videoDurationFrames ?? totalFrames;
           const candidates = [0, this.currentFrame, baseVideoDur];
           let bestStart = newStart;
           let minDiff = thresholdFrames;
@@ -8874,18 +8904,11 @@ class TimelineEditor {
           }
           if (bestStart !== newStart) {
             newStart = bestStart;
-            newLength = this._dragStartRetakeStart + this._dragStartRetakeLength - newStart;
           }
         }
 
-        if (newStart < 0) {
-          newStart = 0;
-          newLength = this._dragStartRetakeStart + this._dragStartRetakeLength;
-        }
-        if (newLength < MIN_SEGMENT_LENGTH) {
-          newLength = MIN_SEGMENT_LENGTH;
-          newStart = this._dragStartRetakeStart + this._dragStartRetakeLength - MIN_SEGMENT_LENGTH;
-        }
+        newStart = clamp(newStart, 0, Math.max(0, fixedEnd - minRetakeFrames));
+        const newLength = fixedEnd - newStart;
 
         this.timeline.retakeStart = newStart;
         this.timeline.retakeLength = newLength;
@@ -8904,6 +8927,7 @@ class TimelineEditor {
         let newLength = this._dragStartRetakeLength + deltaFrames;
 
         const baseVideoDur = this.timeline.retakeVideo?.videoDurationFrames ?? totalFrames;
+        const minRetakeFrames = this.getMinRetakeFrames(baseVideoDur);
         let newEnd = this._dragStartRetakeStart + newLength;
 
         if (this.isSnapping) {
@@ -8924,12 +8948,8 @@ class TimelineEditor {
           }
         }
 
-        if (this._dragStartRetakeStart + newLength > baseVideoDur) {
-          newLength = baseVideoDur - this._dragStartRetakeStart;
-        }
-        if (newLength < MIN_SEGMENT_LENGTH) {
-          newLength = MIN_SEGMENT_LENGTH;
-        }
+        const maxLength = Math.max(minRetakeFrames, baseVideoDur - this._dragStartRetakeStart);
+        newLength = clamp(newLength, minRetakeFrames, maxLength);
 
         this.timeline.retakeLength = newLength;
 
@@ -8945,10 +8965,15 @@ class TimelineEditor {
       if (this._dragType === "retake_center") {
         this.canvas.style.cursor = "grabbing";
         let newStart = this._dragStartRetakeStart + deltaFrames;
+        const baseVideoDur = this.timeline.retakeVideo?.videoDurationFrames ?? totalFrames;
+        const dragLength = clamp(
+          this._dragStartRetakeLength,
+          this.getMinRetakeFrames(baseVideoDur),
+          baseVideoDur,
+        );
 
         if (this.isSnapping) {
           const thresholdFrames = (15 / logicalWidth) * totalFrames;
-          const baseVideoDur = this.timeline.retakeVideo?.videoDurationFrames ?? totalFrames;
           const candidates = [0, this.currentFrame, baseVideoDur];
           let bestStart = newStart;
           let minDiff = thresholdFrames;
@@ -8959,24 +8984,19 @@ class TimelineEditor {
               minDiff = diffLeft;
               bestStart = c;
             }
-            const diffRight = Math.abs((newStart + this._dragStartRetakeLength) - c);
+            const diffRight = Math.abs((newStart + dragLength) - c);
             if (diffRight < minDiff) {
               minDiff = diffRight;
-              bestStart = c - this._dragStartRetakeLength;
+              bestStart = c - dragLength;
             }
           }
           newStart = bestStart;
         }
 
-        if (newStart < 0) {
-          newStart = 0;
-        }
-        const baseVideoDur = this.timeline.retakeVideo?.videoDurationFrames ?? totalFrames;
-        if (newStart + this._dragStartRetakeLength > baseVideoDur) {
-          newStart = baseVideoDur - this._dragStartRetakeLength;
-        }
+        newStart = clamp(newStart, 0, Math.max(0, baseVideoDur - dragLength));
 
         this.timeline.retakeStart = newStart;
+        this.timeline.retakeLength = dragLength;
 
         if (this.timeline.retakeVideo && this.timeline.retakeVideo.videoEl) {
           this.timeline.retakeVideo.videoEl.currentTime = newStart / frameRate;
@@ -10043,6 +10063,9 @@ class TimelineEditor {
   commitChanges(skipRender = false) {
     if (this._suppressCommit) return;
     this.syncMotionBrushResizeLock(false);
+    if (this.retakeMode) {
+      this.clampRetakeRegion();
+    }
     // Deduplicate segments by ID to clean up any duplicates created by the previous onseeked bug
     this.timeline.segments = this.timeline.segments.filter((seg, index, self) => index === self.findIndex((s) => s.id === seg.id));
     if (this.timeline.audioSegments) {
@@ -11514,7 +11537,9 @@ class TimelineEditor {
 
       this.loadMedia();
 
-      if (!this.retakeMode) {
+      if (this.retakeMode) {
+        this.clampRetakeRegion();
+      } else {
         this._suppressCommit = true;
         if (this.timeline.normalStartFrame !== undefined && this.startFramesWidget) {
           this.startFramesWidget.value = this.timeline.normalStartFrame;

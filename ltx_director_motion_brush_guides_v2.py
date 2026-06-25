@@ -13,6 +13,7 @@ from .ltx_director_guide import _load_motion_video_frames
 _SYNTHETIC_DIRECTOR_ATTENTION_STRENGTH = 0.35
 _MOTION_BOUNDARY_GUARD_FRAMES = 16
 _MOTION_CARRY_MAX_FRAMES = 48
+AnyData = io.Custom("*")
 
 
 def _clamp01(value) -> float:
@@ -27,6 +28,13 @@ def _motion_segment_carry_frames(seg: dict) -> int:
         return max(0, min(_MOTION_CARRY_MAX_FRAMES, int(round(float(seg.get("motionCarryFrames", 0) or 0)))))
     except (TypeError, ValueError):
         return 0
+
+
+def _motion_segment_next_start(seg: dict) -> int | None:
+    try:
+        return int(round(float(seg.get("nextStart", seg.get("next_start")))))
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalise_point(point: dict, image_size: dict | None) -> dict[str, float]:
@@ -313,6 +321,12 @@ class LTXDirectorMotionBrushV2Guide(io.ComfyNode):
                 io.Image.Output("image", display_name="motion_guide"),
                 io.Int.Output("frame_idx", display_name="frame_idx"),
                 io.String.Output("render_summary"),
+                io.Video.Output("video", display_name="motion_guide_video"),
+                AnyData.Output(
+                    "video_any",
+                    display_name="motion_guide_any",
+                    tooltip="Wildcard copy of motion_guide_video for nodes that use ANY sockets.",
+                ),
             ],
         )
 
@@ -360,17 +374,18 @@ class LTXDirectorMotionBrushV2Guide(io.ComfyNode):
             if not isinstance(seg, dict):
                 continue
             start = int(round(float(seg.get("start", 0) or 0)))
-            next_start = None
-            for next_seg in sorted_segments[seg_idx + 1 :]:
-                if not isinstance(next_seg, dict):
-                    continue
-                try:
-                    candidate = int(round(float(next_seg.get("start", 0) or 0)))
-                except (TypeError, ValueError):
-                    continue
-                if candidate > start:
-                    next_start = candidate
-                    break
+            next_start = _motion_segment_next_start(seg)
+            if next_start is None:
+                for next_seg in sorted_segments[seg_idx + 1 :]:
+                    if not isinstance(next_seg, dict):
+                        continue
+                    try:
+                        candidate = int(round(float(next_seg.get("start", 0) or 0)))
+                    except (TypeError, ValueError):
+                        continue
+                    if candidate > start:
+                        next_start = candidate
+                        break
 
             sample_frames, render_frames = _motion_segment_frame_counts(seg, next_start, total_frames)
             if sample_frames <= 0 or render_frames <= 0:
@@ -449,7 +464,8 @@ class LTXDirectorMotionBrushV2Guide(io.ComfyNode):
                 "tracks_rendered": int(tracks_rendered),
             }
         )
-        return io.NodeOutput(out, 0, summary)
+        video = _video_from_frames(out, float(payload.get("frame_rate") or 24.0))
+        return io.NodeOutput(out, 0, summary, video, video)
 
 
 def _latent_output_shape(optional_latent, width: int, height: int, duration_frames: int) -> tuple[int, int, int]:
@@ -493,6 +509,7 @@ def _blank_retake_source_preview(
     height = height if height > 0 else 512
     total_frames = max(1, int(total_frames))
     out = torch.zeros(total_frames, int(height), int(width), 3, dtype=torch.float32)
+    video = _video_from_frames(out, frame_rate)
     summary = json.dumps(
         {
             "version": 1,
@@ -506,7 +523,7 @@ def _blank_retake_source_preview(
             "frames": int(total_frames),
         }
     )
-    return io.NodeOutput(out, _video_from_frames(out, frame_rate), 0, summary)
+    return io.NodeOutput(out, video, 0, summary, video)
 
 
 class LTXDirectorMotionBrushV2RetakeSourcePreview(io.ComfyNode):
@@ -562,10 +579,15 @@ class LTXDirectorMotionBrushV2RetakeSourcePreview(io.ComfyNode):
                 ),
             ],
             outputs=[
-                io.Image.Output("image", display_name="retake_source"),
+                io.Image.Output("image", display_name="retake_source_images"),
                 io.Video.Output("video", display_name="retake_source_video"),
                 io.Int.Output("frame_idx", display_name="frame_idx"),
                 io.String.Output("render_summary"),
+                AnyData.Output(
+                    "video_any",
+                    display_name="retake_source_any",
+                    tooltip="Wildcard copy of retake_source_video for nodes that use ANY sockets.",
+                ),
             ],
         )
 
@@ -657,7 +679,8 @@ class LTXDirectorMotionBrushV2RetakeSourcePreview(io.ComfyNode):
                 "frames": int(pixels.shape[0]),
             }
         )
-        return io.NodeOutput(pixels, _video_from_frames(pixels, frame_rate), 0, summary)
+        video = _video_from_frames(pixels, frame_rate)
+        return io.NodeOutput(pixels, video, 0, summary, video)
 
 
 def _conditioning_get_value(conditioning, key, default=None):

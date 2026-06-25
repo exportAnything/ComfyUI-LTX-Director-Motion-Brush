@@ -37,6 +37,7 @@ ROUTE_MARKERS = [
 FRONTEND_MARKERS = [
     "Motion Brush supports image and matte clips only",
     "Retake Mode (BETA)",
+    "MIN_RETAKE_SECONDS",
     "Carry Motion",
     "selectedSegmentIds",
     "ltx-director-motion-brush-v2-styles",
