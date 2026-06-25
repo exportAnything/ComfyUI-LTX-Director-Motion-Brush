@@ -10,3 +10,5 @@
 - Preserve fallback reads for old `ComfyUI/input/whatdreamscost` media references.
 - Document required custom nodes, models, and included Motion Brush nodes.
 - Add explicit attribution for WhatDreamsCost and the upstream LTX Director v2 work.
+- Expand README positioning to describe the rebuilt Motion Brush edition, helper nodes, retake preview, motion carry, upload routing, and guardrails.
+- Add generated sample outputs under `Samples/`.

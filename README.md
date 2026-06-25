@@ -1,8 +1,22 @@
 # LTX Director Motion Brush
 
-Nightly ComfyUI nodes for LTX 2.3 timeline generation with per-image motion brush control.
+Nightly ComfyUI node pack for LTX 2.3 timeline generation, per-image motion brush control, retake workflows, and motion-carry transitions.
 
-This package is a fork of the LTX Director v2 work from WhatDreamsCost, with an added Motion Brush workflow for LTX 2.3 IC-LoRA motion-track control. It is intended as an early tester build, not a stable Comfy Registry release yet.
+This is not just LTX Director with motion tracking tacked on. It is a rebuilt Motion Brush edition of LTX Director v2 with custom guide nodes, safer workflow helpers, standalone upload routes, retake preview output, motion-carry controls, and a polished release workflow for LTX 2.3 IC-LoRA motion-track control.
+
+The original LTX Director v2 concept and base implementation are by WhatDreamsCost. This fork keeps that foundation and adds the Motion Brush workflow layer by exportAnything.
+
+## What This Adds
+
+- A Motion Brush timeline mode for drawing per-image motion tracks directly on top of storyboard images.
+- A rebuilt Director node that keeps LTX Director v2 timeline behavior while adding Motion Brush controls, matte clips, per-image strength, and motion carry.
+- A sparse-track guide renderer that turns drawn tracks into LTX 2.3 IC-LoRA motion-control video.
+- A guide-attention balancing node that helps keep the final video from becoming either static or overpowered by visible motion-track dots.
+- A retake source preview node that outputs the uploaded retake video for before/after comparison workflows.
+- Motion Brush-safe crop/downscale helper nodes so the provided workflow can load without requiring users to install the upstream LTX Director package.
+- Standalone `exportanything_ltx_director_*` upload/audio/workspace routes, avoiding route collisions with upstream LTX Director v2.
+- New upload storage under `ComfyUI/input/exportanything`, with fallback support for older `ComfyUI/input/whatdreamscost` media paths.
+- Guardrails for common failure modes, including Motion Brush aspect-ratio locking, retake minimum length, and anti-bleed default motion boundaries.
 
 ## Nightly Status
 
@@ -29,15 +43,15 @@ This package can coexist with the upstream WhatDreamsCost LTX Director v2 packag
 
 ## Included Nodes
 
-The public workflow depends on these nodes from this package:
+The public workflow depends on these rebuilt and Motion Brush-specific nodes:
 
-- `LTXDirectorMotionBrushV2`
-- `LTXDirectorMotionBrushV2Guide`
-- `LTXDirectorMotionBrushV2GuideAttention`
-- `LTXDirectorMotionBrushV2RetakeSourcePreview`
-- `LTXDirectorMotionBrushV2SafeDownscaleFactor`
-- `LTXDirectorMotionBrushV2DirectorGuide`
-- `LTXDirectorMotionBrushV2CropGuides`
+- `LTXDirectorMotionBrushV2` - the main rebuilt timeline editor with Motion Brush mode, retake support, matte clips, per-image strength, and motion carry.
+- `LTXDirectorMotionBrushV2Guide` - renders drawn motion tracks into a sparse-track control video for LTX 2.3 IC-LoRA workflows.
+- `LTXDirectorMotionBrushV2GuideAttention` - balances Director image guidance against motion-track IC-LoRA guidance.
+- `LTXDirectorMotionBrushV2RetakeSourcePreview` - exposes the uploaded retake source video so it can be compared against the generated output.
+- `LTXDirectorMotionBrushV2SafeDownscaleFactor` - keeps latent downscale settings safe for stage workflows.
+- `LTXDirectorMotionBrushV2DirectorGuide` - Motion Brush package version of the Director guide helper used by the workflow.
+- `LTXDirectorMotionBrushV2CropGuides` - Motion Brush package version of the crop-guide helper used by the workflow.
 
 Existing node class names are kept stable so saved workflows continue to load.
 
@@ -77,6 +91,19 @@ The template is sanitized for release:
 - no bundled source media,
 - no saved retake video sample,
 - package IDs updated to `ComfyUI-LTX-Director-Motion-Brush`.
+
+## Sample Outputs
+
+These are generated examples from the included workflow and related Motion Brush settings. They are committed under `Samples/` so users can see the intended behavior before installing.
+
+| Sample | What it demonstrates | Runtime |
+| --- | --- | --- |
+| [MOTION_BRUSH.mp4](Samples/MOTION_BRUSH.mp4) | Core image timeline plus Motion Brush track guidance. | 15.04s |
+| [MOTION_BRUSH_DISTILLED_MODEL.mp4](Samples/MOTION_BRUSH_DISTILLED_MODEL.mp4) | Motion Brush behavior with the distilled model setup. | 15.04s |
+| [MOTION_CARRY_16_Frames.mp4](Samples/MOTION_CARRY_16_Frames.mp4) | Intentional motion carry into the next image over 16 frames. | 15.04s |
+| [MOTION_CARRY_32_Frames.mp4](Samples/MOTION_CARRY_32_Frames.mp4) | Stronger motion carry over 32 frames for more aggressive transitions. | 15.04s |
+| [RETAKE_8_Steps.mp4](Samples/RETAKE_8_Steps.mp4) | Retake Mode using a short sampling setup. | 10.08s |
+| [RETAKE_DISTILLED_MODEL.mp4](Samples/RETAKE_DISTILLED_MODEL.mp4) | Retake Mode behavior with the distilled model setup. | 10.08s |
 
 ## Motion Brush Notes
 
