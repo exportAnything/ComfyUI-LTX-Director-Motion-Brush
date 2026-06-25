@@ -30,7 +30,11 @@ nightly-YYYYMMDD
 
 ## Install
 
-Clone this repo into your ComfyUI `custom_nodes` folder:
+Install through ComfyUI-Manager once the Registry version is available, or clone this repo into your ComfyUI `custom_nodes` folder:
+
+```powershell
+comfy node install ltx-director-motion-brush
+```
 
 ```powershell
 cd C:\ComfyUI\app\custom_nodes
@@ -90,7 +94,7 @@ The template is sanitized for release:
 - no local user paths,
 - no bundled source media,
 - no saved retake video sample,
-- package IDs updated to `ComfyUI-LTX-Director-Motion-Brush`.
+- package IDs updated to `ltx-director-motion-brush`.
 
 ## Sample Outputs
 

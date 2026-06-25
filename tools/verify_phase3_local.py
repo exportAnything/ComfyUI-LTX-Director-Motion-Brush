@@ -7,6 +7,7 @@ is already running and you also want live node/extension registration checked.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -55,7 +56,17 @@ def check_node_registration() -> None:
     import utils.install_util  # noqa: F401,PLC0415
 
     sys.path.insert(1, str(CUSTOM_NODES))
-    import LTX_Director_v2_motion_brush as package  # noqa: PLC0415
+    package_name = "LTX_Director_v2_motion_brush"
+    package_spec = importlib.util.spec_from_file_location(
+        package_name,
+        ROOT / "__init__.py",
+        submodule_search_locations=[str(ROOT)],
+    )
+    if package_spec is None or package_spec.loader is None:
+        raise RuntimeError(f"Could not load package spec for {ROOT}")
+    package = importlib.util.module_from_spec(package_spec)
+    sys.modules[package_name] = package
+    package_spec.loader.exec_module(package)
 
     registered = set(package.NODE_CLASS_MAPPINGS)
     missing = sorted(EXPECTED_NODES - registered)

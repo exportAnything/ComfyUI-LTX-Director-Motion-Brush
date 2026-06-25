@@ -13,3 +13,4 @@
 - Expand README positioning to describe the rebuilt Motion Brush edition, helper nodes, retake preview, motion carry, upload routing, and guardrails.
 - Add generated sample outputs under `Samples/`.
 - Add lightweight GIF previews for GitHub README rendering.
+- Prepare first Comfy Registry package under `ltx-director-motion-brush`.

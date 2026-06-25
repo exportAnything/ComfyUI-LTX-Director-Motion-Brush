@@ -7,6 +7,7 @@ image/matte-clip-only and is suppressed in Retake Mode.
 from __future__ import annotations
 
 import json
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -36,6 +37,18 @@ if not hasattr(PromptServer, "instance"):
     PromptServer.instance = type("_NoopPromptServer", (), {"routes": _NoopRoutes()})()
 
 sys.path.insert(1, str(CUSTOM_NODES))
+
+PACKAGE_NAME = "LTX_Director_v2_motion_brush"
+package_spec = importlib.util.spec_from_file_location(
+    PACKAGE_NAME,
+    ROOT / "__init__.py",
+    submodule_search_locations=[str(ROOT)],
+)
+if package_spec is None or package_spec.loader is None:
+    raise RuntimeError(f"Could not load package spec for {ROOT}")
+package = importlib.util.module_from_spec(package_spec)
+sys.modules[PACKAGE_NAME] = package
+package_spec.loader.exec_module(package)
 
 from LTX_Director_v2_motion_brush import ltx_director_guide as director_guide  # noqa: E402
 from LTX_Director_v2_motion_brush import ltx_director_motion_brush_guides_v2 as motion_guides  # noqa: E402

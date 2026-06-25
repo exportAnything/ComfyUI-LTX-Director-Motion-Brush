@@ -1,0 +1,8 @@
+# Keep GitHub demo media out of the Comfy Registry install archive.
+Samples/
+
+# Local/editor/cache files should never ship in a registry package.
+.codex/
+.github/
+__pycache__/
+*.pyc

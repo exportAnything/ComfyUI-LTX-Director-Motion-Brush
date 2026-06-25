@@ -1,6 +1,6 @@
 [project]
-name = "ComfyUI-LTX-Director-Motion-Brush"
-description = "A nightly ComfyUI LTX Director fork with timeline motion brush control for LTX 2.3 workflows."
+name = "ltx-director-motion-brush"
+description = "LTX Director Motion Brush timeline tools for LTX 2.3 workflows."
 version = "0.1.0"
 license = {file = "LICENSE"} 
 # classifiers = [
