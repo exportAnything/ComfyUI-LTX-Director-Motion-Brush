@@ -286,7 +286,7 @@ class LTXDirectorMotionBrushV2Guide(io.ComfyNode):
         return io.Schema(
             node_id="LTXDirectorMotionBrushV2Guide",
             display_name="LTX Director Motion Brush V2 Guide",
-            category="WhatDreamsCost",
+            category="exportAnything/LTX Motion Brush",
             description=(
                 "Renders motion tracks saved by LTX Director Motion Brush into a sparse-track "
                 "control video that can be connected to LTXAddVideoICLoRAGuide."
@@ -534,7 +534,7 @@ class LTXDirectorMotionBrushV2RetakeSourcePreview(io.ComfyNode):
         return io.Schema(
             node_id="LTXDirectorMotionBrushV2RetakeSourcePreview",
             display_name="LTX Director Motion Brush V2 Retake Source Preview",
-            category="WhatDreamsCost",
+            category="exportAnything/LTX Motion Brush",
             description=(
                 "Reads the Retake Mode video stored in LTX Director Motion Brush V2 guide_data "
                 "and emits the same source range as an IMAGE batch for comparison nodes."
@@ -793,7 +793,7 @@ class LTXDirectorMotionBrushV2GuideAttention(io.ComfyNode):
         return io.Schema(
             node_id="LTXDirectorMotionBrushV2GuideAttention",
             display_name="LTX Director Motion Brush V2 Guide Attention",
-            category="WhatDreamsCost",
+            category="exportAnything/LTX Motion Brush",
             description=(
                 "Adds a synthetic guide-attention entry for regular Director keyframes while "
                 "preserving the motion IC-LoRA guide entry. This avoids mixed-guide token "
@@ -837,7 +837,7 @@ class LTXDirectorMotionBrushV2SafeDownscaleFactor(io.ComfyNode):
         return io.Schema(
             node_id="LTXDirectorMotionBrushV2SafeDownscaleFactor",
             display_name="LTX Director Motion Brush V2 Safe Downscale Factor",
-            category="WhatDreamsCost",
+            category="exportAnything/LTX Motion Brush",
             description=(
                 "Passes through the IC-LoRA latent_downscale_factor when the latent width "
                 "and height are divisible by it. Falls back to 1.0 for odd or otherwise "

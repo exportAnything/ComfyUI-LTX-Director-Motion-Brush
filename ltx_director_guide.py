@@ -666,7 +666,7 @@ class LTXDirectorCropGuides:
     RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "LATENT")
     RETURN_NAMES = ("positive", "negative", "latent")
     FUNCTION = "execute"
-    CATEGORY = "WhatDreamsCost"
+    CATEGORY = "exportAnything/LTX Motion Brush"
 
     def execute(self, positive, negative, latent):
         latent_image = latent["samples"].clone()

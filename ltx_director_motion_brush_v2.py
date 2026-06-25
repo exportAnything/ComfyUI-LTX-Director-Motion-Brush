@@ -65,10 +65,42 @@ except Exception:
 GuideData = io.Custom("GUIDE_DATA")
 MotionGuideData = io.Custom("MOTION_GUIDE_DATA")
 MOTION_CARRY_MAX_FRAMES = 48
+UPLOAD_SUBFOLDER = "exportanything"
+LEGACY_UPLOAD_SUBFOLDER = "whatdreamscost"
+UPLOAD_FALLBACK_SUBFOLDERS = (UPLOAD_SUBFOLDER, LEGACY_UPLOAD_SUBFOLDER)
+
+
+def _route_get(path):
+    instance = getattr(PromptServer, "instance", None)
+    routes = getattr(instance, "routes", None)
+    return routes.get(path) if routes is not None else (lambda fn: fn)
+
+
+def _route_post(path):
+    instance = getattr(PromptServer, "instance", None)
+    routes = getattr(instance, "routes", None)
+    return routes.post(path) if routes is not None else (lambda fn: fn)
+
+
+def _input_path_with_upload_fallback(filename):
+    input_dir = folder_paths.get_input_directory()
+    clean_filename = (filename or "").replace('\\', '/')
+    basename = os.path.basename(clean_filename)
+    candidates = []
+    if clean_filename:
+        candidates.append(os.path.join(input_dir, clean_filename))
+    if basename:
+        for subfolder in UPLOAD_FALLBACK_SUBFOLDERS:
+            candidates.append(os.path.join(input_dir, subfolder, basename))
+        candidates.append(os.path.join(input_dir, basename))
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return candidates[0] if candidates else os.path.join(input_dir, clean_filename)
 
 # --- File Check Endpoint for Deduplication ---
-# Route provided by installed upstream LTX Director v2 package
-#@PromptServer.instance.routes.get("/ltx_director_check_file")
+@_route_get("/exportanything_ltx_director_check_file")
 async def ltx_director_check_file(request):
     filename = request.query.get("filename", "")
     file_size = request.query.get("size", "")
@@ -76,11 +108,13 @@ async def ltx_director_check_file(request):
         return web.json_response({"exists": False})
 
     upload_dir = folder_paths.get_input_directory()
-    temp_dir = os.path.join(upload_dir, "whatdreamscost")
+    primary_dir = os.path.join(upload_dir, UPLOAD_SUBFOLDER)
+    legacy_dir = os.path.join(upload_dir, LEGACY_UPLOAD_SUBFOLDER)
 
-    # 1. Check if the exact filename exists in whatdreamscost or root input dir
+    # 1. Check if the exact filename exists in the exportAnything, legacy, or root input dir.
     possible_paths = [
-        os.path.join(temp_dir, filename),
+        os.path.join(primary_dir, filename),
+        os.path.join(legacy_dir, filename),
         os.path.join(upload_dir, filename)
     ]
 
@@ -107,7 +141,7 @@ async def ltx_director_check_file(request):
     base_name = os.path.basename(filename)
     suffix = f"_{base_name}"
     try:
-        for search_dir in [temp_dir, upload_dir]:
+        for search_dir in [primary_dir, legacy_dir, upload_dir]:
             if os.path.exists(search_dir):
                 for f_name in os.listdir(search_dir):
                     if f_name.endswith(suffix) or f_name == base_name:
@@ -275,24 +309,14 @@ def get_audio_peaks(audio_path):
         return None
 
 
-# Route provided by installed upstream LTX Director v2 package
-#@PromptServer.instance.routes.get("/ltx_director_get_audio")
+@_route_get("/exportanything_ltx_director_get_audio")
 async def ltx_director_get_audio(request):
     filename = request.query.get("filename")
     if not filename:
         return web.json_response({"error": "Missing filename"}, status=400)
 
     upload_dir = folder_paths.get_input_directory()
-
-    clean_filename = filename.replace('\\', '/')
-    file_path = os.path.join(upload_dir, clean_filename)
-    if not os.path.exists(file_path):
-        basename = os.path.basename(clean_filename)
-        temp_path = os.path.join(upload_dir, "whatdreamscost", basename)
-        if os.path.exists(temp_path):
-            file_path = temp_path
-        else:
-            file_path = os.path.join(upload_dir, basename)
+    file_path = _input_path_with_upload_fallback(filename)
 
     if not os.path.exists(file_path) or not os.path.isfile(file_path):
         return web.json_response({"error": "File not found"}, status=404)
@@ -326,10 +350,9 @@ async def ltx_director_get_audio(request):
     })
 
 
-# Route provided by installed upstream LTX Director v2 package
-#@PromptServer.instance.routes.get("/ltx_director_open_folder")
+@_route_get("/exportanything_ltx_director_open_folder")
 async def ltx_director_open_folder(request):
-    upload_dir = os.path.join(folder_paths.get_input_directory(), "whatdreamscost")
+    upload_dir = os.path.join(folder_paths.get_input_directory(), UPLOAD_SUBFOLDER)
     os.makedirs(upload_dir, exist_ok=True)
     try:
         if hasattr(os, "startfile"):
@@ -352,8 +375,7 @@ def _read_and_write_file_chunk(file, file_path, mode):
 # --- LTX Director Chunked Video Upload Endpoint ---
 # Bypasses the 413 Payload Too Large error for large video files.
 # This endpoint is self-contained and independent of any other node.
-# Route provided by installed upstream LTX Director v2 package
-#@PromptServer.instance.routes.post("/ltx_director_upload_chunk")
+@_route_post("/exportanything_ltx_director_upload_chunk")
 async def ltx_director_upload_chunk(request):
     post = await request.post()
     file = post.get("file")
@@ -361,7 +383,7 @@ async def ltx_director_upload_chunk(request):
     chunk_index = int(post.get("chunk_index"))
     total_chunks = int(post.get("total_chunks"))
 
-    upload_dir = os.path.join(folder_paths.get_input_directory(), "whatdreamscost")
+    upload_dir = os.path.join(folder_paths.get_input_directory(), UPLOAD_SUBFOLDER)
     os.makedirs(upload_dir, exist_ok=True)
 
     # Sanitize filename to prevent path traversal attacks (e.g. ../../etc/passwd)
@@ -387,7 +409,7 @@ async def ltx_director_upload_chunk(request):
             print(f"[LTXDirector] Error in final chunk audio extraction: {e}")
 
         return web.json_response({
-            "name": f"whatdreamscost/{filename}",
+            "name": f"{UPLOAD_SUBFOLDER}/{filename}",
             "audio_file": audio_file,
             "peaks": peaks
         })
@@ -664,13 +686,7 @@ def _build_combined_audio(timeline_data_str: str, start_frame: int, duration_fra
         buffer = None
         file_key = "videoFile" if override_audio else "audioFile"
         if seg.get(file_key):
-            file_path = os.path.join(folder_paths.get_input_directory(), seg[file_key])
-            if not os.path.exists(file_path):
-                # Try fallback under whatdreamscost subfolder
-                basename = os.path.basename(seg[file_key])
-                fallback_path = os.path.join(folder_paths.get_input_directory(), "whatdreamscost", basename)
-                if os.path.exists(fallback_path):
-                    file_path = fallback_path
+            file_path = _input_path_with_upload_fallback(seg[file_key])
 
             if os.path.exists(file_path):
                 with open(file_path, "rb") as f:
@@ -1282,7 +1298,7 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
         return io.Schema(
             node_id="LTXDirectorMotionBrushV2",
             display_name="LTX Director Motion Brush V2",
-            category="WhatDreamsCost",
+            category="exportAnything/LTX Motion Brush",
             description=(
                 "LTX Director v2 with the same storyboard timeline plus per-keyframe "
                 "motion-brush tracks for LTX 2.3 motion-track IC-LoRA workflows."
@@ -1532,12 +1548,7 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
                 retake_vid = tdata_motion.get("retakeVideo") or {}
                 retake_file = retake_vid.get("imageFile", "") if isinstance(retake_vid, dict) else ""
                 if is_retake and retake_file:
-                    r_path = os.path.join(folder_paths.get_input_directory(), retake_file)
-                    if not os.path.exists(r_path):
-                        basename = os.path.basename(retake_file)
-                        fallback_path = os.path.join(folder_paths.get_input_directory(), "whatdreamscost", basename)
-                        if os.path.exists(fallback_path):
-                            r_path = fallback_path
+                    r_path = _input_path_with_upload_fallback(retake_file)
                     if os.path.exists(r_path):
                         try:
                             with av.open(r_path) as container:
@@ -1553,12 +1564,7 @@ class LTXDirectorMotionBrushV2(io.ComfyNode):
                     for mseg in tdata_motion.get("motionSegments", []):
                         v_file = mseg.get("videoFile")
                         if v_file:
-                            v_path = os.path.join(folder_paths.get_input_directory(), v_file)
-                            if not os.path.exists(v_path):
-                                basename = os.path.basename(v_file)
-                                fallback_path = os.path.join(folder_paths.get_input_directory(), "whatdreamscost", basename)
-                                if os.path.exists(fallback_path):
-                                    v_path = fallback_path
+                            v_path = _input_path_with_upload_fallback(v_file)
                             if os.path.exists(v_path):
                                 try:
                                     with av.open(v_path) as container:

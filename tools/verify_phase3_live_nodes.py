@@ -11,13 +11,14 @@ from urllib.request import urlopen
 EXPECTED_NODES = {
     "LTXDirectorMotionBrushV2": "LTX Director Motion Brush V2",
     "LTXDirectorMotionBrushV2Guide": "LTX Director Motion Brush V2 Guide",
+    "LTXDirectorMotionBrushV2RetakeSourcePreview": "LTX Director Motion Brush V2 Retake Source Preview",
     "LTXDirectorMotionBrushV2GuideAttention": "LTX Director Motion Brush V2 Guide Attention",
     "LTXDirectorMotionBrushV2SafeDownscaleFactor": "LTX Director Motion Brush V2 Safe Downscale Factor",
     "LTXDirectorMotionBrushV2DirectorGuide": "LTX Director Motion Brush V2 Director Guide",
     "LTXDirectorMotionBrushV2CropGuides": "LTX Director Motion Brush V2 Crop Guides",
 }
 
-EXPECTED_EXTENSION = "/extensions/LTX_Director_v2_motion_brush/ltx_director_motion_brush_v2.js"
+EXPECTED_EXTENSION_SUFFIX = "/ltx_director_motion_brush_v2.js"
 
 
 def fetch_json(url: str):
@@ -44,8 +45,8 @@ def main() -> None:
             raise AssertionError(f"{class_name} display name: expected {display_name!r}, got {actual_name!r}")
 
     extensions = fetch_json(f"{base_url}/extensions")
-    if EXPECTED_EXTENSION not in extensions:
-        raise AssertionError(f"Missing frontend extension {EXPECTED_EXTENSION}")
+    if not any(str(extension).endswith(EXPECTED_EXTENSION_SUFFIX) for extension in extensions):
+        raise AssertionError(f"Missing frontend extension ending in {EXPECTED_EXTENSION_SUFFIX}")
 
     print("Phase 3 live Motion Brush node registration passed")
 

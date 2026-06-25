@@ -1,7 +1,7 @@
 [project]
-name = "WhatDreamsCost-ComfyUI"
-description = "A variety of custom ComfyUI nodes and workflows for creatives."
-version = "2.0.2"
+name = "ComfyUI-LTX-Director-Motion-Brush"
+description = "A nightly ComfyUI LTX Director fork with timeline motion brush control for LTX 2.3 workflows."
+version = "0.1.0"
 license = {file = "LICENSE"} 
 # classifiers = [
 #     # For OS-independent nodes (works on all operating systems)
@@ -22,15 +22,14 @@ license = {file = "LICENSE"}
 
 
 [project.urls]
-Repository = "https://github.com/WhatDreamsCost/WhatDreamsCost-ComfyUI"
+Repository = "https://github.com/exportAnything/ComfyUI-LTX-Director-Motion-Brush"
 #  Used by Comfy Registry https://registry.comfy.org
-Documentation = "https://github.com/WhatDreamsCost/WhatDreamsCost-ComfyUI/wiki"
-"Bug Tracker" = "https://github.com/WhatDreamsCost/WhatDreamsCost-ComfyUI/issues"
+Documentation = "https://github.com/exportAnything/ComfyUI-LTX-Director-Motion-Brush#readme"
+"Bug Tracker" = "https://github.com/exportAnything/ComfyUI-LTX-Director-Motion-Brush/issues"
 
 [tool.comfy]
-PublisherId = "whatdreamscost"
-DisplayName = "WhatDreamsCost-ComfyUI"
-Icon = "https://raw.githubusercontent.com/WhatDreamsCost/MediaSyncer/refs/heads/main/Icon.png"
+PublisherId = "exportanything"
+DisplayName = "LTX Director Motion Brush"
 includes = [] 
 # "requires-comfyui" = ">=1.0.0"  # ComfyUI version compatibility
 

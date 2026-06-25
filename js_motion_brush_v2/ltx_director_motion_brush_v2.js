@@ -2176,7 +2176,7 @@ class TimelineEditor {
     }
 
     const extractionPromise = (async () => {
-      const resp = await api.fetchApi(`/ltx_director_get_audio?filename=${encodeURIComponent(fileKey)}`);
+      const resp = await api.fetchApi(`/exportanything_ltx_director_get_audio?filename=${encodeURIComponent(fileKey)}`);
       if (resp.status === 200) {
         return await resp.json();
       }
@@ -2864,7 +2864,7 @@ class TimelineEditor {
     helpBtn.title = "Help / Documentation";
     helpBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      window.open("https://github.com/WhatDreamsCost/WhatDreamsCost-ComfyUI", "_blank");
+      window.open("https://github.com/exportAnything/ComfyUI-LTX-Director-Motion-Brush", "_blank");
     });
 
     this.isSnapping = this.node.properties.isSnapping !== false;
@@ -5081,7 +5081,7 @@ class TimelineEditor {
         try {
           const body = new FormData();
           body.append("image", file);
-          body.append("subfolder", "whatdreamscost");
+          body.append("subfolder", "exportanything");
           const resp = await api.fetchApi("/upload/image", { method: "POST", body });
           if (resp.status !== 200) { resolve(); return; }
 
@@ -5188,14 +5188,14 @@ class TimelineEditor {
   // Shared chunked upload helper for all video types in the LTX Director.
   // Files <= 50 MB go through ComfyUI's standard /upload/image endpoint;
   // larger files are split into 50 MB chunks and sent to the LTX Director's
-  // own /ltx_director_upload_chunk endpoint to bypass the 413 size limit.
+  // own /exportanything_ltx_director_upload_chunk endpoint to bypass the 413 size limit.
   async _uploadVideoFile(file) {
     const CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB
     const safeFileName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
 
     // First check if the file already exists on the server to de-duplicate
     try {
-      const checkResp = await api.fetchApi(`/ltx_director_check_file?filename=${encodeURIComponent(safeFileName)}&size=${file.size}`);
+      const checkResp = await api.fetchApi(`/exportanything_ltx_director_check_file?filename=${encodeURIComponent(safeFileName)}&size=${file.size}`);
       if (checkResp.status === 200) {
         const checkResult = await checkResp.json();
         if (checkResult.exists) {
@@ -5218,7 +5218,7 @@ class TimelineEditor {
         formData.append("filename", safeName);
         formData.append("chunk_index", i);
         formData.append("total_chunks", totalChunks);
-        const resp = await api.fetchApi("/ltx_director_upload_chunk", { method: "POST", body: formData });
+        const resp = await api.fetchApi("/exportanything_ltx_director_upload_chunk", { method: "POST", body: formData });
         if (resp.status !== 200) throw new Error("LTX Director video chunk upload failed");
       }
       return safeName; // filename (no subfolder) in the input dir
@@ -5226,7 +5226,7 @@ class TimelineEditor {
       // --- Single-shot path (small file) ---
       const body = new FormData();
       body.append("image", file);
-      body.append("subfolder", "whatdreamscost");
+      body.append("subfolder", "exportanything");
       const resp = await api.fetchApi("/upload/image", { method: "POST", body });
       if (resp.status !== 200) throw new Error(`LTX Director video upload failed: ${resp.statusText}`);
       const data = await resp.json();
@@ -5483,7 +5483,7 @@ class TimelineEditor {
 
                 // Query server for extracted WAV audio file and waveform peaks
                 if (filePath) {
-                  api.fetchApi(`/ltx_director_get_audio?filename=${encodeURIComponent(filePath)}`)
+                  api.fetchApi(`/exportanything_ltx_director_get_audio?filename=${encodeURIComponent(filePath)}`)
                     .then(r => r.json())
                     .then(res => {
                       if (res.audio_file && res.peaks) {
@@ -5757,7 +5757,7 @@ class TimelineEditor {
         try {
           const body = new FormData();
           body.append("image", file);
-          body.append("subfolder", "whatdreamscost");
+          body.append("subfolder", "exportanything");
           const resp = await api.fetchApi("/upload/image", { method: "POST", body });
           if (resp.status !== 200) { resolve(); return; }
 
@@ -10837,7 +10837,7 @@ class TimelineEditor {
 
               const body = new FormData();
               body.append("image", file);
-              body.append("subfolder", "whatdreamscost");
+              body.append("subfolder", "exportanything");
               const resp = await api.fetchApi("/upload/image", { method: "POST", body });
               if (resp.status === 200) {
                 const data = await resp.json();
@@ -10882,7 +10882,7 @@ class TimelineEditor {
           try {
             const body = new FormData();
             body.append("image", file);
-            body.append("subfolder", "whatdreamscost");
+            body.append("subfolder", "exportanything");
             const resp = await api.fetchApi("/upload/image", { method: "POST", body });
             if (resp.status === 200) {
               const data = await resp.json();
@@ -12013,7 +12013,7 @@ class TimelineEditor {
     btnOpenFolder.style.margin = "0";
     btnOpenFolder.addEventListener("click", async () => {
       try {
-        const response = await api.fetchApi("/ltx_director_open_folder");
+        const response = await api.fetchApi("/exportanything_ltx_director_open_folder");
         const data = await response.json();
         if (!data.success) {
           console.error("Failed to open workspace folder:", data.error || "Unknown error");

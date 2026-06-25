@@ -28,10 +28,10 @@ EXPECTED_NODES = {
 }
 
 ROUTE_MARKERS = [
-    "#@PromptServer.instance.routes.get(\"/ltx_director_check_file\")",
-    "#@PromptServer.instance.routes.get(\"/ltx_director_get_audio\")",
-    "#@PromptServer.instance.routes.get(\"/ltx_director_open_folder\")",
-    "#@PromptServer.instance.routes.post(\"/ltx_director_upload_chunk\")",
+    "\"/exportanything_ltx_director_check_file\"",
+    "\"/exportanything_ltx_director_get_audio\"",
+    "\"/exportanything_ltx_director_open_folder\"",
+    "\"/exportanything_ltx_director_upload_chunk\"",
 ]
 
 FRONTEND_MARKERS = [
@@ -63,12 +63,12 @@ def check_node_registration() -> None:
         raise AssertionError(f"Missing node registrations: {missing}")
 
 
-def check_routes_stay_disabled() -> None:
-    print("[phase3] workspace/chunk routes remain disabled")
+def check_exportanything_routes() -> None:
+    print("[phase3] exportAnything workspace/chunk routes")
     source = (ROOT / "ltx_director_motion_brush_v2.py").read_text(encoding="utf-8")
     missing = [marker for marker in ROUTE_MARKERS if marker not in source]
     if missing:
-        raise AssertionError(f"Expected disabled route markers missing: {missing}")
+        raise AssertionError(f"Expected exportAnything route markers missing: {missing}")
 
 
 def check_frontend_markers() -> None:
@@ -115,7 +115,7 @@ def main() -> None:
         run("git diff --check", [git, "diff", "--check"])
 
     check_node_registration()
-    check_routes_stay_disabled()
+    check_exportanything_routes()
     check_frontend_markers()
 
     if args.base_url:
