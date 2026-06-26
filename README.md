@@ -2,6 +2,8 @@
 
 Nightly ComfyUI node pack for LTX 2.3 timeline generation, per-image motion brush control, retake workflows, and motion-carry transitions.
 
+Japanese guide: [README_ja.md](./README_ja.md)
+
 This is not just LTX Director with motion tracking tacked on. It is a rebuilt Motion Brush edition of LTX Director v2 with custom guide nodes, safer workflow helpers, standalone upload routes, retake preview output, motion-carry controls, and a polished release workflow for LTX 2.3 IC-LoRA motion-track control.
 
 The original LTX Director v2 concept and base implementation are by WhatDreamsCost. This fork keeps that foundation and adds the Motion Brush workflow layer by exportAnything.
@@ -89,6 +91,14 @@ Load:
 ```text
 example_workflows/LTX_Director_Motion_Brush_V2.json
 ```
+
+Japanese annotated copy:
+
+```text
+example_workflows/LTX_Director_Motion_Brush_V2_ja.json
+```
+
+The Japanese copy keeps the same node behavior and class names, with translated workflow notes and selected workflow titles for easier onboarding.
 
 The template is sanitized for release:
 
