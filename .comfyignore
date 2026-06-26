@@ -4,5 +4,6 @@ Samples/
 # Local/editor/cache files should never ship in a registry package.
 .codex/
 .github/
+tools/
 __pycache__/
 *.pyc

@@ -1,7 +1,7 @@
 [project]
 name = "ltx-director-motion-brush"
 description = "LTX Director Motion Brush timeline tools for LTX 2.3 workflows."
-version = "0.1.0"
+version = "0.1.1"
 license = {file = "LICENSE"} 
 # classifiers = [
 #     # For OS-independent nodes (works on all operating systems)

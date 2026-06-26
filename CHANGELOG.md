@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Exclude development-only verification scripts from the Comfy Registry install archive.
+- Clarify that verification helpers are available from a source checkout, not the Registry package.
+
 ## 0.1.0 Nightly
 
 - Package the known-good LTX Director Motion Brush V2 workflow for GitHub prerelease testing.

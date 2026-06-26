@@ -166,6 +166,8 @@ Legacy workflows that reference `ComfyUI/input/whatdreamscost` media are still r
 
 ## Verification
 
+These development checks are available from a source checkout of this repository. They are intentionally excluded from the Comfy Registry install archive so the installed node pack contains only runtime files.
+
 From this repo folder, run:
 
 ```powershell
