@@ -77,7 +77,8 @@ The workflow expects an LTX 2.3 setup compatible with your local ComfyUI install
 - LTX 2.3 text encoders.
 - LTX 2.3 VAE or tiny VAE used by the workflow.
 - LTX 2.3 latent upscale model used by the workflow.
-- IC-LoRA motion-track control LoRA, for example `ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors`.
+- Lightricks IC-LoRA Ingredients for LTX 2.3: https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients
+- Lightricks IC-LoRA Motion-Track-Control for LTX 2.3, including the motion-track-control LoRA such as `ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors`: https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Motion-Track-Control
 
 Model paths are not bundled. Place models where your LTXVideo workflow expects them.
 
