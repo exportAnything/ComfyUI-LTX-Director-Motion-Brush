@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add lower-VRAM and GGUF lower-VRAM example workflows.
+- Document `ComfyUI-GGUF` as an optional dependency for the GGUF workflow.
+
 ## 0.1.1
 
 - Exclude development-only verification scripts from the Comfy Registry install archive.

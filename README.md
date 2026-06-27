@@ -69,6 +69,10 @@ Install or update these separately:
 - `comfyui-kjnodes`
 - `ComfyUI-Impact-Pack`
 
+For the GGUF low-VRAM workflow, also install:
+
+- `ComfyUI-GGUF`
+
 The example workflow also uses ComfyUI core video nodes and grouped/subgraph nodes saved inside the workflow.
 
 ## Required Models
@@ -84,9 +88,23 @@ The workflow expects an LTX 2.3 setup compatible with your local ComfyUI install
 
 Model paths are not bundled. Place models where your LTXVideo workflow expects them.
 
-## Example Workflow
+## Example Workflows
 
-Load:
+Recommended lower-VRAM workflow:
+
+```text
+example_workflows/LTX_Director_Motion_Brush_V2_Low_Vram.json
+```
+
+Very low-VRAM GGUF workflow:
+
+```text
+example_workflows/LTX_Director_Motion_Brush_V2_Low_Vram_GGUF.json
+```
+
+The GGUF workflow uses GGUF UNet/CLIP loaders and requires `ComfyUI-GGUF` plus matching GGUF model files.
+
+Full/default workflow:
 
 ```text
 example_workflows/LTX_Director_Motion_Brush_V2.json
@@ -100,12 +118,14 @@ example_workflows/LTX_Director_Motion_Brush_V2_ja.json
 
 The Japanese copy keeps the same node behavior and class names, with translated workflow notes and selected workflow titles for easier onboarding.
 
-The template is sanitized for release:
+The base public template is sanitized for release:
 
 - no local user paths,
 - no bundled source media,
 - no saved retake video sample,
 - package IDs updated to `ltx-director-motion-brush`.
+
+The low-VRAM workflows may include example timeline references under `ComfyUI/input/exportanything`; replace missing images or audio with your own media after loading.
 
 ## Sample Outputs
 

@@ -37,6 +37,10 @@ git clone https://github.com/exportAnything/ComfyUI-LTX-Director-Motion-Brush.gi
 - `comfyui-kjnodes`
 - `ComfyUI-Impact-Pack`
 
+GGUF 低 VRAM ワークフローを使う場合は、次も追加でインストールしてください。
+
+- `ComfyUI-GGUF`
+
 また、ワークフロー内には ComfyUI core の動画ノードや、保存済みの grouped/subgraph ノードも含まれています。
 
 ## 必要なモデル
@@ -60,6 +64,20 @@ ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors
 
 ## ワークフロー
 
+推奨の低 VRAM ワークフロー:
+
+```text
+example_workflows/LTX_Director_Motion_Brush_V2_Low_Vram.json
+```
+
+非常に低い VRAM 向けの GGUF ワークフロー:
+
+```text
+example_workflows/LTX_Director_Motion_Brush_V2_Low_Vram_GGUF.json
+```
+
+GGUF 版は GGUF 用の UNet/CLIP loader を使うため、`ComfyUI-GGUF` と対応する GGUF model file が必要です。
+
 英語版の標準ワークフロー:
 
 ```text
@@ -74,11 +92,13 @@ example_workflows/LTX_Director_Motion_Brush_V2_ja.json
 
 日本語版は、ワークフロー内の説明メモや一部タイトルを日本語にしたコピーです。ノード本体の挙動やクラス名は変更していません。
 
+低 VRAM / GGUF ワークフローには、`ComfyUI/input/exportanything` 配下のサンプル入力を参照するタイムラインが含まれる場合があります。読み込み後に画像や音声が見つからない場合は、自分の入力メディアに置き換えてください。
+
 ## 基本的な使い方
 
 1. 必要なカスタムノードとモデルをインストールします。
 2. ComfyUI を再起動します。
-3. `example_workflows/LTX_Director_Motion_Brush_V2_ja.json` を読み込みます。
+3. まず `example_workflows/LTX_Director_Motion_Brush_V2_Low_Vram.json` を読み込みます。GGUF 環境では `example_workflows/LTX_Director_Motion_Brush_V2_Low_Vram_GGUF.json` を使います。
 4. `LTX Director Motion Brush V2` ノードのタイムラインに画像を追加します。
 5. `Motion Brush` をオンにして、動かしたい方向に軌跡を描きます。
 6. 必要に応じて `Guide Strength`、`Carry Motion`、`Matte`、Retake Mode を調整します。
